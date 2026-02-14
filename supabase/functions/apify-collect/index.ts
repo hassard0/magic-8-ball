@@ -11,12 +11,15 @@ serve(async (req) => {
 
   try {
     const { questionId, questionText, sources, timeRange, optimizedQueries } = await req.json();
-    // Use optimized queries per platform, falling back to original question
+    // Use optimized queries per platform, ALWAYS including the original question as first query
     const getQueries = (platform: string): string[] => {
+      const queries = [questionText]; // always include original
       if (optimizedQueries && optimizedQueries[platform] && optimizedQueries[platform].length > 0) {
-        return optimizedQueries[platform];
+        for (const q of optimizedQueries[platform]) {
+          if (q !== questionText) queries.push(q);
+        }
       }
-      return [questionText];
+      return queries;
     };
     const APIFY_API_KEY = Deno.env.get("APIFY_API_KEY");
     if (!APIFY_API_KEY) throw new Error("APIFY_API_KEY not configured");
@@ -30,22 +33,24 @@ serve(async (req) => {
 
     const allDocuments: any[] = [];
 
-    // Helper to collect Reddit results for a single query
-    const fetchReddit = async (query: string) => {
+    // Helper to collect Reddit results - sends ALL queries in one Apify call
+    const fetchReddit = async (queries: string[]) => {
       const docs: any[] = [];
       try {
+        console.log("Reddit: sending all queries in one call:", queries);
         const runRes = await fetch("https://api.apify.com/v2/acts/trudax~reddit-scraper-lite/run-sync-get-dataset-items?token=" + APIFY_API_KEY, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            searches: [query],
-            maxItems: 20,
+            searches: queries,
+            maxItems: 50,
             sort: "relevance",
             time: timeRangeDays <= 7 ? "week" : timeRangeDays <= 30 ? "month" : "year",
           }),
         });
         if (runRes.ok) {
           const items = await runRes.json();
+          console.log(`Reddit results: ${(items || []).length}`);
           for (const item of items || []) {
             docs.push({
               question_id: questionId, source: "reddit",
@@ -56,7 +61,10 @@ serve(async (req) => {
               engagement_metrics: { score: item.score, comments: item.numComments || item.numberOfComments },
             });
           }
-        } else { console.error("Reddit failed for:", query); }
+        } else { 
+          const errText = await runRes.text();
+          console.error("Reddit failed:", runRes.status, errText); 
+        }
       } catch (e) { console.error("Reddit error:", e); }
       return docs;
     };
@@ -106,20 +114,30 @@ serve(async (req) => {
     const fetchSubstack = async (query: string) => {
       const docs: any[] = [];
       try {
-        const res = await fetch(`https://substack.com/api/v1/post/search?query=${encodeURIComponent(query)}&page=0&limit=10`);
+        const url = `https://substack.com/api/v1/post/search?query=${encodeURIComponent(query)}&page=0&limit=10`;
+        console.log(`Substack fetching: ${url}`);
+        const res = await fetch(url);
+        console.log(`Substack response for "${query}": ${res.status}`);
         if (res.ok) {
-          const data = await res.json();
-          const posts = data.posts || data.results || data || [];
-          for (const item of (Array.isArray(posts) ? posts : [])) {
-            docs.push({
-              question_id: questionId, source: "substack",
-              url: item.canonical_url || item.url || null,
-              author: item.publishedBylines?.[0]?.name || item.author?.name || item.author || null,
-              text: (item.title || "") + (item.subtitle ? "\n" + item.subtitle : "") + (item.description ? "\n" + item.description : ""),
-              date: item.post_date || item.publishedAt || null,
-              engagement_metrics: { likes: item.reaction_count || item.reactions || 0, comments: item.comment_count || 0 },
-            });
-          }
+          const rawText = await res.text();
+          console.log(`Substack raw response length: ${rawText.length}, preview: ${rawText.substring(0, 200)}`);
+          try {
+            const data = JSON.parse(rawText);
+            const posts = data.posts || data.results || (Array.isArray(data) ? data : []);
+            console.log(`Substack posts parsed: ${Array.isArray(posts) ? posts.length : 'not array'}`);
+            for (const item of (Array.isArray(posts) ? posts : [])) {
+              docs.push({
+                question_id: questionId, source: "substack",
+                url: item.canonical_url || item.url || null,
+                author: item.publishedBylines?.[0]?.name || item.author?.name || item.author || null,
+                text: (item.title || "") + (item.subtitle ? "\n" + item.subtitle : "") + (item.description ? "\n" + item.description : ""),
+                date: item.post_date || item.publishedAt || null,
+                engagement_metrics: { likes: item.reaction_count || item.reactions || 0, comments: item.comment_count || 0 },
+              });
+            }
+          } catch (parseErr) { console.error("Substack JSON parse error:", parseErr); }
+        } else {
+          console.error(`Substack failed for "${query}":`, res.status, await res.text());
         }
       } catch (e) { console.error("Substack error:", e); }
       return docs;
@@ -131,8 +149,7 @@ serve(async (req) => {
     if (sources.includes("reddit")) {
       const queries = getQueries("reddit");
       console.log("Reddit queries:", queries);
-      // Only use first query for Reddit (Apify is slow), rest are fast APIs
-      tasks.push(fetchReddit(queries[0]));
+      tasks.push(fetchReddit(queries)); // pass all queries at once
     }
     if (sources.includes("hackernews")) {
       const queries = getQueries("hackernews");
