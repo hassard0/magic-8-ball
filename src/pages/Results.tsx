@@ -7,8 +7,19 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ArrowLeft, ExternalLink, TrendingUp, TrendingDown, Minus, Shield, MessageSquare, Hash, RotateCcw } from "lucide-react";
+import { ArrowLeft, ExternalLink, TrendingUp, TrendingDown, Minus, Shield, MessageSquare, Hash, RotateCcw, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from "recharts";
 import type { Tables, Json } from "@/integrations/supabase/types";
 
@@ -94,6 +105,22 @@ export default function Results() {
     }
   };
 
+  const handleDelete = async () => {
+    if (!id) return;
+    try {
+      await Promise.all([
+        supabase.from("analysis_results").delete().eq("question_id", id),
+        supabase.from("documents").delete().eq("question_id", id),
+      ]);
+      await supabase.from("questions").delete().eq("id", id);
+      toast({ title: "Deleted", description: "Question and results removed." });
+      navigate("/");
+    } catch (err) {
+      console.error("Delete error:", err);
+      toast({ title: "Error", description: "Failed to delete.", variant: "destructive" });
+    }
+  };
+
   if (loading) {
     return (
       <AppLayout>
@@ -170,12 +197,36 @@ export default function Results() {
               </span>
             </div>
           </div>
-          {(question.status === "complete" || question.status === "failed") && (
-            <Button variant="outline" size="sm" onClick={handleRerun} disabled={rerunning}>
-              <RotateCcw className={`h-4 w-4 mr-1.5 ${rerunning ? "animate-spin" : ""}`} />
-              {rerunning ? "Re-running…" : "Re-run"}
-            </Button>
-          )}
+          <div className="flex items-center gap-2">
+            {(question.status === "complete" || question.status === "failed") && (
+              <Button variant="outline" size="sm" onClick={handleRerun} disabled={rerunning}>
+                <RotateCcw className={`h-4 w-4 mr-1.5 ${rerunning ? "animate-spin" : ""}`} />
+                {rerunning ? "Re-running…" : "Re-run"}
+              </Button>
+            )}
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="outline" size="sm" className="text-destructive hover:text-destructive">
+                  <Trash2 className="h-4 w-4 mr-1.5" />
+                  Delete
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete this question?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This will permanently delete the question, all collected data, and analysis results.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                    Delete
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </div>
         </div>
 
         {question.status !== "complete" ? (
