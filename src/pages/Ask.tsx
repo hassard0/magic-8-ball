@@ -15,6 +15,8 @@ const TIME_RANGES = [
   { value: "7d", label: "7 days" },
   { value: "30d", label: "30 days" },
   { value: "90d", label: "90 days" },
+  { value: "180d", label: "180 days" },
+  { value: "1y", label: "1 year" },
 ];
 
 const SOURCES = [
