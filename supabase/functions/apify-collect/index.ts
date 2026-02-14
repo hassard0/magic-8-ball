@@ -30,6 +30,9 @@ serve(async (req) => {
     );
 
     const timeRangeDays = timeRange === "7d" ? 7 : timeRange === "90d" ? 90 : 30;
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - timeRangeDays);
+    const cutoffTimestamp = Math.floor(cutoffDate.getTime() / 1000);
 
     const allDocuments: any[] = [];
 
@@ -73,9 +76,10 @@ serve(async (req) => {
     const fetchHN = async (query: string) => {
       const docs: any[] = [];
       try {
+        const dateFilter = `created_at_i>${cutoffTimestamp}`;
         const [storiesRes, commentsRes] = await Promise.all([
-          fetch(`https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(query)}&tags=story&hitsPerPage=20`),
-          fetch(`https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(query)}&tags=comment&hitsPerPage=30`),
+          fetch(`https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(query)}&tags=story&numericFilters=${dateFilter}&hitsPerPage=20`),
+          fetch(`https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(query)}&tags=comment&numericFilters=${dateFilter}&hitsPerPage=30`),
         ]);
         if (storiesRes.ok) {
           const data = await storiesRes.json();
@@ -130,6 +134,7 @@ serve(async (req) => {
           body: JSON.stringify({
             query: searchQuery,
             limit: 15,
+            tbs: timeRangeDays <= 7 ? "qdr:w" : timeRangeDays <= 30 ? "qdr:m" : "qdr:y",
             scrapeOptions: { formats: ["markdown"] },
           }),
         });
@@ -179,9 +184,18 @@ serve(async (req) => {
     const results = await Promise.all(tasks);
     for (const docs of results) allDocuments.push(...docs);
 
-    // Insert documents
+    // Filter documents: must have text AND be within the requested time range
     if (allDocuments.length > 0) {
-      const filtered = allDocuments.filter((d) => d.text && d.text.trim().length > 0);
+      const filtered = allDocuments.filter((d) => {
+        if (!d.text || d.text.trim().length === 0) return false;
+        // If document has a date, enforce the time range cutoff
+        if (d.date) {
+          const docDate = new Date(d.date);
+          if (!isNaN(docDate.getTime()) && docDate < cutoffDate) return false;
+        }
+        return true;
+      });
+      console.log(`Documents after time filter: ${filtered.length} (from ${allDocuments.length} total, cutoff: ${cutoffDate.toISOString()})`);
       if (filtered.length > 0) {
         const { error } = await supabase.from("documents").insert(filtered);
         if (error) console.error("Insert documents error:", error);
