@@ -32,7 +32,7 @@ export default function Auth() {
           password,
           options: {
             emailRedirectTo: window.location.origin,
-            data: { display_name: displayName || email },
+            data: { display_name: displayName || email, org_name: orgName },
           },
         });
         if (error) throw error;
@@ -43,25 +43,6 @@ export default function Auth() {
             description: "We sent you a confirmation link. Please verify your email to continue.",
           });
           return;
-        }
-
-        // Create org and assign admin role
-        if (data.user && orgName) {
-          const { data: org, error: orgError } = await supabase
-            .from("organizations")
-            .insert({ name: orgName })
-            .select()
-            .single();
-          if (orgError) throw orgError;
-
-          await supabase
-            .from("profiles")
-            .update({ org_id: org.id })
-            .eq("user_id", data.user.id);
-
-          await supabase
-            .from("user_roles")
-            .insert({ user_id: data.user.id, org_id: org.id, role: "admin" });
         }
 
         navigate("/");
