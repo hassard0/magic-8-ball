@@ -71,38 +71,13 @@ export default function Auth() {
 
         <Card className="border-border/50 bg-card/80 backdrop-blur">
           <CardHeader className="pb-4">
-            <CardTitle className="text-lg">{isLogin ? "Sign in" : "Create account"}</CardTitle>
+            <CardTitle className="text-lg">Sign in</CardTitle>
             <CardDescription>
-              {isLogin
-                ? "Enter your credentials to access your dashboard"
-                : "Set up your account and organization"}
+              Enter your credentials to access your dashboard
             </CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
-              {!isLogin && (
-                <>
-                  <div className="space-y-2">
-                    <Label htmlFor="displayName">Display name</Label>
-                    <Input
-                      id="displayName"
-                      value={displayName}
-                      onChange={(e) => setDisplayName(e.target.value)}
-                      placeholder="Your name"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="orgName">Organization name</Label>
-                    <Input
-                      id="orgName"
-                      value={orgName}
-                      onChange={(e) => setOrgName(e.target.value)}
-                      placeholder="Acme Corp"
-                      required
-                    />
-                  </div>
-                </>
-              )}
               <div className="space-y-2">
                 <Label htmlFor="email">Email</Label>
                 <Input
@@ -127,18 +102,9 @@ export default function Auth() {
                 />
               </div>
               <Button type="submit" className="w-full" disabled={loading}>
-                {loading ? "Loading..." : isLogin ? "Sign in" : "Create account"}
+                {loading ? "Loading..." : "Sign in"}
               </Button>
             </form>
-            <div className="mt-4 text-center">
-              <button
-                type="button"
-                onClick={() => setIsLogin(!isLogin)}
-                className="text-sm text-muted-foreground hover:text-primary transition-colors"
-              >
-                {isLogin ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
-              </button>
-            </div>
           </CardContent>
         </Card>
       </div>
