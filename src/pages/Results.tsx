@@ -187,7 +187,7 @@ export default function Results() {
         {/* Back & title */}
         <div className="flex items-center gap-3">
           <Button variant="outline" size="icon" onClick={() => navigate(-1)} className="shrink-0 border-primary/40 bg-secondary hover:bg-secondary/80">
-            <ArrowLeft className="h-4 w-4" />
+            <ArrowLeft className="h-4 w-4 text-foreground" />
           </Button>
           <div className="flex-1 min-w-0">
             <h1 className="text-lg font-semibold tracking-tight text-foreground">{question.question_text}</h1>
