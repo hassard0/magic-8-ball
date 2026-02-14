@@ -93,10 +93,10 @@ export default function Results() {
       setQuestion((prev) => prev ? { ...prev, status: "queued" } : prev);
 
       // Trigger run-question
-      const { error } = await supabase.functions.invoke("run-question", {
+      // Fire-and-forget — pipeline runs in background
+      supabase.functions.invoke("run-question", {
         body: { questionId: id },
       });
-      if (error) throw error;
       toast({ title: "Re-running analysis", description: "Collecting fresh data and analyzing..." });
     } catch (err) {
       console.error("Rerun error:", err);
