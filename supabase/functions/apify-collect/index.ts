@@ -56,77 +56,73 @@ serve(async (req) => {
       } catch (e) { console.error("Reddit error:", e); }
     }
 
-    // Hacker News search
+    // Hacker News search via Algolia API
     if (sources.includes("hackernews")) {
       try {
+        // Search stories by relevance
         const hnRes = await fetch(`https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(questionText)}&tags=story&hitsPerPage=50`);
         if (hnRes.ok) {
           const hnData = await hnRes.json();
+          console.log(`HN stories found: ${hnData.nbHits}, returned: ${(hnData.hits || []).length}`);
           for (const hit of hnData.hits || []) {
             allDocuments.push({
               question_id: questionId,
               source: "hackernews",
               url: hit.url || `https://news.ycombinator.com/item?id=${hit.objectID}`,
               author: hit.author || null,
-              text: hit.title || hit.story_text || "",
+              text: hit.title + (hit.story_text ? "\n" + hit.story_text.replace(/<[^>]+>/g, "") : ""),
               date: hit.created_at || null,
               engagement_metrics: { points: hit.points, comments: hit.num_comments },
             });
           }
 
-          // Also get comments for top stories
-          for (const hit of (hnData.hits || []).slice(0, 5)) {
-            try {
-              const commentsRes = await fetch(`https://hn.algolia.com/api/v1/search?tags=comment,story_${hit.objectID}&hitsPerPage=20`);
-              if (commentsRes.ok) {
-                const commentsData = await commentsRes.json();
-                for (const comment of commentsData.hits || []) {
-                  if (comment.comment_text) {
-                    allDocuments.push({
-                      question_id: questionId,
-                      source: "hackernews",
-                      url: `https://news.ycombinator.com/item?id=${comment.objectID}`,
-                      author: comment.author || null,
-                      text: comment.comment_text.replace(/<[^>]+>/g, ""),
-                      date: comment.created_at || null,
-                      engagement_metrics: { points: comment.points },
-                    });
-                  }
-                }
+          // Also fetch comments for richer sentiment data
+          const commentsRes = await fetch(`https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(questionText)}&tags=comment&hitsPerPage=100`);
+          if (commentsRes.ok) {
+            const commentsData = await commentsRes.json();
+            console.log(`HN comments found: ${commentsData.nbHits}, returned: ${(commentsData.hits || []).length}`);
+            for (const comment of commentsData.hits || []) {
+              if (comment.comment_text) {
+                allDocuments.push({
+                  question_id: questionId,
+                  source: "hackernews",
+                  url: `https://news.ycombinator.com/item?id=${comment.objectID}`,
+                  author: comment.author || null,
+                  text: comment.comment_text.replace(/<[^>]+>/g, ""),
+                  date: comment.created_at || null,
+                  engagement_metrics: { points: comment.points || 0 },
+                });
               }
-            } catch {}
+            }
           }
+        } else {
+          console.error("HN search failed:", hnRes.status, await hnRes.text());
         }
       } catch (e) { console.error("HN error:", e); }
     }
 
-    // Substack search via Apify
+    // Substack search via Substack's public API
     if (sources.includes("substack")) {
       try {
-        const runRes = await fetch("https://api.apify.com/v2/acts/curious_coder~substack-scraper/run-sync-get-dataset-items?token=" + APIFY_API_KEY, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            searchTerms: [questionText],
-            maxItems: 30,
-          }),
-        });
-
-        if (runRes.ok) {
-          const items = await runRes.json();
-          for (const item of items || []) {
+        // Substack has a public search endpoint
+        const searchRes = await fetch(`https://substack.com/api/v1/post/search?query=${encodeURIComponent(questionText)}&page=0&limit=30`);
+        if (searchRes.ok) {
+          const searchData = await searchRes.json();
+          const posts = searchData.posts || searchData.results || searchData || [];
+          console.log(`Substack posts found: ${Array.isArray(posts) ? posts.length : 'non-array'}`);
+          for (const item of (Array.isArray(posts) ? posts : [])) {
             allDocuments.push({
               question_id: questionId,
               source: "substack",
-              url: item.url || item.canonical_url || null,
-              author: item.author || item.publishedBylines?.[0]?.name || null,
-              text: item.subtitle || item.description || item.title || "",
+              url: item.canonical_url || item.url || null,
+              author: item.publishedBylines?.[0]?.name || item.author?.name || item.author || null,
+              text: (item.title || "") + (item.subtitle ? "\n" + item.subtitle : "") + (item.description ? "\n" + item.description : ""),
               date: item.post_date || item.publishedAt || null,
-              engagement_metrics: { likes: item.reactions || 0 },
+              engagement_metrics: { likes: item.reaction_count || item.reactions || 0, comments: item.comment_count || 0 },
             });
           }
         } else {
-          console.error("Substack scrape failed:", await runRes.text());
+          console.error("Substack search failed:", searchRes.status, await searchRes.text());
         }
       } catch (e) { console.error("Substack error:", e); }
     }
