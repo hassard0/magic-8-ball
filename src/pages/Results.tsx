@@ -186,7 +186,7 @@ export default function Results() {
       <div className="space-y-6">
         {/* Back & title */}
         <div className="flex items-center gap-3">
-          <Button variant="outline" size="icon" onClick={() => navigate(-1)} className="shrink-0">
+          <Button variant="outline" size="icon" onClick={() => navigate(-1)} className="shrink-0 border-primary/40 bg-secondary hover:bg-secondary/80">
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div className="flex-1 min-w-0">
