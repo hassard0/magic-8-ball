@@ -11,15 +11,12 @@ serve(async (req) => {
 
   try {
     const { questionId, questionText, sources, timeRange, optimizedQueries } = await req.json();
-    // Use optimized queries per platform, ALWAYS including the original question as first query
+    // Use extracted keywords per platform — these are focused 1-3 word terms
     const getQueries = (platform: string): string[] => {
-      const queries = [questionText]; // always include original
       if (optimizedQueries && optimizedQueries[platform] && optimizedQueries[platform].length > 0) {
-        for (const q of optimizedQueries[platform]) {
-          if (q !== questionText) queries.push(q);
-        }
+        return optimizedQueries[platform];
       }
-      return queries;
+      return [questionText]; // fallback to original question
     };
     const APIFY_API_KEY = Deno.env.get("APIFY_API_KEY");
     if (!APIFY_API_KEY) throw new Error("APIFY_API_KEY not configured");

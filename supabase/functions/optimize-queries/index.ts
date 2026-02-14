@@ -15,25 +15,21 @@ serve(async (req) => {
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
 
-    const systemPrompt = `You are a search query optimization expert. Given a user's question about public sentiment, generate simple search queries for each platform.
+    const systemPrompt = `You are a search keyword extractor. Given a user's question, extract 1-3 core search keywords or short phrases that identify the specific company, product, or topic being discussed.
 
-CRITICAL RULES:
-- Keep queries SIMPLE: 2-4 plain words, NO quotes, NO special syntax, NO subreddit prefixes like "r/webdev"
-- Use the core subject/company name in every query
-- Vary the angle: one broad query, one about opinions/reactions, one about alternatives or comparisons
-- Think about what terms people ACTUALLY use when discussing this topic
-- The queries will be used with basic search APIs, so simpler = better results
-- For Reddit: Think about how people title posts when complaining or discussing something
-- For Hacker News: Use the company/product name plus simple descriptors
-- For Substack: Think about how newsletter writers title their analysis
+RULES:
+- Extract the SPECIFIC entity name (e.g. "Auth0", "Stripe", "Vercel")
+- Add 1-2 additional terms only if they narrow the topic meaningfully (e.g. "pricing", "reliability")
+- Keep each keyword/phrase to 1-3 words maximum
+- These keywords will be used as simple search terms across Reddit, HN, and Substack
+- DO NOT generate full questions or complex queries
+- DO NOT add generic terms like "review", "opinion", "alternative"
 
-BAD examples: "r/webdev Auth0 expensive", '"Auth0" pricing "rip off"', "Auth0 enterprise pricing criticism"
-GOOD examples: "Auth0 pricing", "Auth0 expensive alternative", "Auth0 review"`;
-
-    const userPrompt = `Question: "${questionText}"
-Platforms to optimize for: ${sources.join(", ")}
-
-Generate optimized search queries for each platform.`;
+Examples:
+- "How do people feel about Auth0 pricing?" → ["Auth0", "Auth0 pricing"]
+- "What's the sentiment around Vercel?" → ["Vercel"]
+- "Is Stripe Connect worth using for marketplaces?" → ["Stripe Connect", "Stripe Connect marketplace"]
+- "How reliable is Supabase for production?" → ["Supabase", "Supabase production"]`;
 
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
@@ -42,53 +38,42 @@ Generate optimized search queries for each platform.`;
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
+        model: "google/gemini-2.5-flash-lite",
         messages: [
           { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
+          { role: "user", content: `Question: "${questionText}"` },
         ],
         tools: [
           {
             type: "function",
             function: {
-              name: "return_search_queries",
-              description: "Return optimized search queries for each platform",
+              name: "return_keywords",
+              description: "Return 1-3 core search keywords extracted from the question",
               parameters: {
                 type: "object",
                 properties: {
-                  reddit: {
+                  keywords: {
                     type: "array",
                     items: { type: "string" },
-                    description: "Search queries optimized for Reddit",
-                  },
-                  hackernews: {
-                    type: "array",
-                    items: { type: "string" },
-                    description: "Search queries optimized for Hacker News",
-                  },
-                  substack: {
-                    type: "array",
-                    items: { type: "string" },
-                    description: "Search queries optimized for Substack",
+                    description: "1-3 core search keywords or short phrases",
                   },
                 },
-                required: sources,
+                required: ["keywords"],
                 additionalProperties: false,
               },
             },
           },
         ],
-        tool_choice: { type: "function", function: { name: "return_search_queries" } },
+        tool_choice: { type: "function", function: { name: "return_keywords" } },
       }),
     });
 
     if (!response.ok) {
-      const errText = await response.text();
-      console.error("AI gateway error:", response.status, errText);
-      // Fallback: just use the original question for all platforms
-      const fallback: Record<string, string[]> = {};
-      for (const s of sources) fallback[s] = [questionText];
-      return new Response(JSON.stringify({ queries: fallback }), {
+      console.error("AI gateway error:", response.status, await response.text());
+      // Fallback: use original question as keyword
+      const queries: Record<string, string[]> = {};
+      for (const s of sources) queries[s] = [questionText];
+      return new Response(JSON.stringify({ queries }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -98,15 +83,19 @@ Generate optimized search queries for each platform.`;
 
     if (!toolCall) {
       console.error("No tool call in response, falling back");
-      const fallback: Record<string, string[]> = {};
-      for (const s of sources) fallback[s] = [questionText];
-      return new Response(JSON.stringify({ queries: fallback }), {
+      const queries: Record<string, string[]> = {};
+      for (const s of sources) queries[s] = [questionText];
+      return new Response(JSON.stringify({ queries }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const queries = JSON.parse(toolCall.function.arguments);
-    console.log("Optimized queries:", JSON.stringify(queries));
+    const { keywords } = JSON.parse(toolCall.function.arguments);
+    console.log("Extracted keywords:", JSON.stringify(keywords));
+
+    // Use the same keywords for all platforms
+    const queries: Record<string, string[]> = {};
+    for (const s of sources) queries[s] = keywords;
 
     return new Response(JSON.stringify({ queries }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
