@@ -61,8 +61,9 @@ export default function Results() {
     const channel = supabase
       .channel(`question-${id}`)
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "questions", filter: `id=eq.${id}` }, (payload) => {
-        setQuestion(payload.new as Question);
-        if ((payload.new as Question).status === "complete") {
+        const newQ = payload.new as Question & { progress_step?: string };
+        setQuestion(newQ);
+        if (newQ.status === "complete") {
           // Refetch analysis
           supabase.from("analysis_results").select("*").eq("question_id", id).maybeSingle()
             .then(({ data }) => setAnalysis(data));
@@ -347,7 +348,7 @@ export default function Results() {
                     {pieData.map((d) => (
                       <div key={d.name} className="flex items-center gap-1.5 text-xs">
                         <div className="w-2 h-2 rounded-full" style={{ backgroundColor: d.color }} />
-                        {d.name} ({d.value}%)
+                        {d.name} ({Math.round(d.value)}%)
                       </div>
                     ))}
                   </div>
