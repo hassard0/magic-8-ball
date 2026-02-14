@@ -30,112 +30,123 @@ serve(async (req) => {
 
     const allDocuments: any[] = [];
 
-    // Reddit search via Apify
+    // Helper to collect Reddit results for a single query
+    const fetchReddit = async (query: string) => {
+      const docs: any[] = [];
+      try {
+        const runRes = await fetch("https://api.apify.com/v2/acts/trudax~reddit-scraper-lite/run-sync-get-dataset-items?token=" + APIFY_API_KEY, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            searches: [query],
+            maxItems: 20,
+            sort: "relevance",
+            time: timeRangeDays <= 7 ? "week" : timeRangeDays <= 30 ? "month" : "year",
+          }),
+        });
+        if (runRes.ok) {
+          const items = await runRes.json();
+          for (const item of items || []) {
+            docs.push({
+              question_id: questionId, source: "reddit",
+              url: item.url || item.permalink || null,
+              author: item.author || item.username || null,
+              text: item.body || item.title || item.text || "",
+              date: item.createdAt || item.created || null,
+              engagement_metrics: { score: item.score, comments: item.numComments || item.numberOfComments },
+            });
+          }
+        } else { console.error("Reddit failed for:", query); }
+      } catch (e) { console.error("Reddit error:", e); }
+      return docs;
+    };
+
+    // Helper for HN
+    const fetchHN = async (query: string) => {
+      const docs: any[] = [];
+      try {
+        const [storiesRes, commentsRes] = await Promise.all([
+          fetch(`https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(query)}&tags=story&hitsPerPage=20`),
+          fetch(`https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(query)}&tags=comment&hitsPerPage=30`),
+        ]);
+        if (storiesRes.ok) {
+          const data = await storiesRes.json();
+          console.log(`HN stories for "${query}": ${(data.hits || []).length}`);
+          for (const hit of data.hits || []) {
+            docs.push({
+              question_id: questionId, source: "hackernews",
+              url: hit.url || `https://news.ycombinator.com/item?id=${hit.objectID}`,
+              author: hit.author || null,
+              text: hit.title + (hit.story_text ? "\n" + hit.story_text.replace(/<[^>]+>/g, "") : ""),
+              date: hit.created_at || null,
+              engagement_metrics: { points: hit.points, comments: hit.num_comments },
+            });
+          }
+        }
+        if (commentsRes.ok) {
+          const data = await commentsRes.json();
+          for (const c of data.hits || []) {
+            if (c.comment_text) {
+              docs.push({
+                question_id: questionId, source: "hackernews",
+                url: `https://news.ycombinator.com/item?id=${c.objectID}`,
+                author: c.author || null,
+                text: c.comment_text.replace(/<[^>]+>/g, ""),
+                date: c.created_at || null,
+                engagement_metrics: { points: c.points || 0 },
+              });
+            }
+          }
+        }
+      } catch (e) { console.error("HN error:", e); }
+      return docs;
+    };
+
+    // Helper for Substack
+    const fetchSubstack = async (query: string) => {
+      const docs: any[] = [];
+      try {
+        const res = await fetch(`https://substack.com/api/v1/post/search?query=${encodeURIComponent(query)}&page=0&limit=10`);
+        if (res.ok) {
+          const data = await res.json();
+          const posts = data.posts || data.results || data || [];
+          for (const item of (Array.isArray(posts) ? posts : [])) {
+            docs.push({
+              question_id: questionId, source: "substack",
+              url: item.canonical_url || item.url || null,
+              author: item.publishedBylines?.[0]?.name || item.author?.name || item.author || null,
+              text: (item.title || "") + (item.subtitle ? "\n" + item.subtitle : "") + (item.description ? "\n" + item.description : ""),
+              date: item.post_date || item.publishedAt || null,
+              engagement_metrics: { likes: item.reaction_count || item.reactions || 0, comments: item.comment_count || 0 },
+            });
+          }
+        }
+      } catch (e) { console.error("Substack error:", e); }
+      return docs;
+    };
+
+    // Run ALL queries across ALL platforms in parallel
+    const tasks: Promise<any[]>[] = [];
+
     if (sources.includes("reddit")) {
-      const redditQueries = getQueries("reddit");
-      console.log("Reddit queries:", redditQueries);
-      for (const query of redditQueries) {
-        try {
-          const runRes = await fetch("https://api.apify.com/v2/acts/trudax~reddit-scraper-lite/run-sync-get-dataset-items?token=" + APIFY_API_KEY, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              searches: [query],
-              maxItems: 30,
-              sort: "relevance",
-              time: timeRangeDays <= 7 ? "week" : timeRangeDays <= 30 ? "month" : "year",
-            }),
-          });
-
-          if (runRes.ok) {
-            const items = await runRes.json();
-            for (const item of items || []) {
-              allDocuments.push({
-                question_id: questionId,
-                source: "reddit",
-                url: item.url || item.permalink || null,
-                author: item.author || item.username || null,
-                text: item.body || item.title || item.text || "",
-                date: item.createdAt || item.created || null,
-                engagement_metrics: { score: item.score, comments: item.numComments || item.numberOfComments },
-              });
-            }
-          } else {
-            console.error("Reddit scrape failed for query:", query, await runRes.text());
-          }
-        } catch (e) { console.error("Reddit error:", e); }
-      }
+      const queries = getQueries("reddit");
+      console.log("Reddit queries:", queries);
+      // Only use first query for Reddit (Apify is slow), rest are fast APIs
+      tasks.push(fetchReddit(queries[0]));
     }
-
-    // Hacker News search via Algolia API
     if (sources.includes("hackernews")) {
-      const hnQueries = getQueries("hackernews");
-      console.log("HN queries:", hnQueries);
-      for (const query of hnQueries) {
-        try {
-          const hnRes = await fetch(`https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(query)}&tags=story&hitsPerPage=30`);
-          if (hnRes.ok) {
-            const hnData = await hnRes.json();
-            console.log(`HN stories for "${query}": ${(hnData.hits || []).length}`);
-            for (const hit of hnData.hits || []) {
-              allDocuments.push({
-                question_id: questionId,
-                source: "hackernews",
-                url: hit.url || `https://news.ycombinator.com/item?id=${hit.objectID}`,
-                author: hit.author || null,
-                text: hit.title + (hit.story_text ? "\n" + hit.story_text.replace(/<[^>]+>/g, "") : ""),
-                date: hit.created_at || null,
-                engagement_metrics: { points: hit.points, comments: hit.num_comments },
-              });
-            }
-
-            const commentsRes = await fetch(`https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(query)}&tags=comment&hitsPerPage=50`);
-            if (commentsRes.ok) {
-              const commentsData = await commentsRes.json();
-              for (const comment of commentsData.hits || []) {
-                if (comment.comment_text) {
-                  allDocuments.push({
-                    question_id: questionId,
-                    source: "hackernews",
-                    url: `https://news.ycombinator.com/item?id=${comment.objectID}`,
-                    author: comment.author || null,
-                    text: comment.comment_text.replace(/<[^>]+>/g, ""),
-                    date: comment.created_at || null,
-                    engagement_metrics: { points: comment.points || 0 },
-                  });
-                }
-              }
-            }
-          }
-        } catch (e) { console.error("HN error:", e); }
-      }
+      const queries = getQueries("hackernews");
+      console.log("HN queries:", queries);
+      for (const q of queries) tasks.push(fetchHN(q));
     }
-
-    // Substack search
     if (sources.includes("substack")) {
-      const substackQueries = getQueries("substack");
-      console.log("Substack queries:", substackQueries);
-      for (const query of substackQueries) {
-        try {
-          const searchRes = await fetch(`https://substack.com/api/v1/post/search?query=${encodeURIComponent(query)}&page=0&limit=15`);
-          if (searchRes.ok) {
-            const searchData = await searchRes.json();
-            const posts = searchData.posts || searchData.results || searchData || [];
-            for (const item of (Array.isArray(posts) ? posts : [])) {
-              allDocuments.push({
-                question_id: questionId,
-                source: "substack",
-                url: item.canonical_url || item.url || null,
-                author: item.publishedBylines?.[0]?.name || item.author?.name || item.author || null,
-                text: (item.title || "") + (item.subtitle ? "\n" + item.subtitle : "") + (item.description ? "\n" + item.description : ""),
-                date: item.post_date || item.publishedAt || null,
-                engagement_metrics: { likes: item.reaction_count || item.reactions || 0, comments: item.comment_count || 0 },
-              });
-            }
-          }
-        } catch (e) { console.error("Substack error:", e); }
-      }
+      const queries = getQueries("substack");
+      console.log("Substack queries:", queries);
+      for (const q of queries) tasks.push(fetchSubstack(q));
     }
+
+    const results = await Promise.all(tasks);
+    for (const docs of results) allDocuments.push(...docs);
 
     // Insert documents
     if (allDocuments.length > 0) {
