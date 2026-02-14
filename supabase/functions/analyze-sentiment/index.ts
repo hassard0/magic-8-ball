@@ -76,7 +76,7 @@ You MUST call the "analyze_sentiment" function with your analysis results. Do no
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
+        model: "google/gemini-2.5-flash",
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: `Here are ${documents.length} community posts/comments to analyze:\n\n${docSummaries}` },
