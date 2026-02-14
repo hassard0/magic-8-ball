@@ -52,7 +52,7 @@ serve(async (req) => {
       const batch = documents.slice(i, i + BATCH_SIZE);
 
       const docList = batch.map((d, idx) =>
-        `[${idx + 1}] (id: ${d.id}) Source: ${d.source} | Author: ${d.author || "unknown"}\n${d.text.slice(0, 300)}`
+        `[${idx + 1}] (uuid: ${d.id}) Source: ${d.source} | Author: ${d.author || "unknown"}\n${d.text.slice(0, 200)}`
       ).join("\n\n");
 
       const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
@@ -68,16 +68,11 @@ serve(async (req) => {
               role: "system",
               content: `You are a relevance filter. The user asked: "${question.question_text}"
 
-For each document below, determine if it is RELEVANT to this question. A document is relevant if it:
-- Directly discusses the company/product/topic mentioned in the question
-- Contains opinions, experiences, or information about the specific subject
+For each document below, determine if it is RELEVANT to this question.
+A document is relevant if it directly discusses the specific company/product/topic.
+A document is NOT relevant if it only mentions the topic tangentially or is about something else.
 
-A document is NOT relevant if it:
-- Only mentions the topic in passing or as a tangential reference
-- Is about a completely different subject that happens to share keywords
-- Is a general discussion that doesn't relate to the specific question
-
-Return the IDs of documents that are NOT relevant.`,
+Return the UUIDs (the "uuid" field) of documents that are NOT relevant. Return ONLY valid UUIDs, not index numbers.`,
             },
             { role: "user", content: docList },
           ],
@@ -116,7 +111,10 @@ Return the IDs of documents that are NOT relevant.`,
       if (toolCall) {
         const result = JSON.parse(toolCall.function.arguments);
         if (result.irrelevant_ids?.length > 0) {
-          irrelevantIds.push(...result.irrelevant_ids);
+          // Filter to only valid UUIDs
+          const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+          const validIds = result.irrelevant_ids.filter((id: string) => uuidRegex.test(id));
+          irrelevantIds.push(...validIds);
         }
       }
     }
