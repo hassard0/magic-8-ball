@@ -169,10 +169,8 @@ export default function Index() {
                 {questions.map((q) => (
                   <button
                     key={q.id}
-                    onClick={() =>
-                      q.status === "complete" ? navigate(`/results/${q.id}`) : null
-                    }
-                    className="w-full flex items-center justify-between px-3 py-2.5 rounded-md hover:bg-secondary/50 transition-colors text-left"
+                    onClick={() => navigate(`/results/${q.id}`)}
+                    className="w-full flex items-center justify-between px-3 py-2.5 rounded-md hover:bg-secondary/50 transition-colors text-left cursor-pointer"
                   >
                     <span className="text-sm truncate max-w-[70%]">{q.question_text}</span>
                     <div className="flex items-center gap-3">
