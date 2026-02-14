@@ -127,7 +127,7 @@ You MUST call the "analyze_sentiment" function with your analysis results. Do no
                       required: ["text", "source", "sentiment"],
                       additionalProperties: false,
                     },
-                    description: "5-10 representative quotes with sentiment labels",
+                    description: "9-12 representative quotes. MUST include at least 3 positive, 3 neutral, and 3 negative quotes for balanced coverage. Pick the most insightful quote for each sentiment.",
                   },
                   source_breakdown: {
                     type: "object",

@@ -110,34 +110,48 @@ serve(async (req) => {
       return docs;
     };
 
-    // Helper for Substack
+    // Helper for Substack (via Firecrawl search)
     const fetchSubstack = async (query: string) => {
       const docs: any[] = [];
       try {
-        const url = `https://substack.com/api/v1/post/search?query=${encodeURIComponent(query)}&page=0&limit=10`;
-        console.log(`Substack fetching: ${url}`);
-        const res = await fetch(url);
-        console.log(`Substack response for "${query}": ${res.status}`);
+        const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY");
+        if (!FIRECRAWL_API_KEY) {
+          console.error("FIRECRAWL_API_KEY not configured, skipping Substack");
+          return docs;
+        }
+        const searchQuery = `site:substack.com ${query}`;
+        console.log(`Substack (Firecrawl) searching: ${searchQuery}`);
+        const res = await fetch("https://api.firecrawl.dev/v1/search", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${FIRECRAWL_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            query: searchQuery,
+            limit: 15,
+            scrapeOptions: { formats: ["markdown"] },
+          }),
+        });
         if (res.ok) {
-          const rawText = await res.text();
-          console.log(`Substack raw response length: ${rawText.length}, preview: ${rawText.substring(0, 200)}`);
-          try {
-            const data = JSON.parse(rawText);
-            const posts = data.posts || data.results || (Array.isArray(data) ? data : []);
-            console.log(`Substack posts parsed: ${Array.isArray(posts) ? posts.length : 'not array'}`);
-            for (const item of (Array.isArray(posts) ? posts : [])) {
+          const data = await res.json();
+          const results = data?.data || [];
+          console.log(`Substack (Firecrawl) results for "${query}": ${results.length}`);
+          for (const item of results) {
+            const text = item.markdown || item.description || "";
+            if (text.trim().length > 0) {
               docs.push({
                 question_id: questionId, source: "substack",
-                url: item.canonical_url || item.url || null,
-                author: item.publishedBylines?.[0]?.name || item.author?.name || item.author || null,
-                text: (item.title || "") + (item.subtitle ? "\n" + item.subtitle : "") + (item.description ? "\n" + item.description : ""),
-                date: item.post_date || item.publishedAt || null,
-                engagement_metrics: { likes: item.reaction_count || item.reactions || 0, comments: item.comment_count || 0 },
+                url: item.url || null,
+                author: item.metadata?.author || item.metadata?.ogSiteName || null,
+                text: text.slice(0, 2000),
+                date: item.metadata?.publishedTime || null,
+                engagement_metrics: {},
               });
             }
-          } catch (parseErr) { console.error("Substack JSON parse error:", parseErr); }
+          }
         } else {
-          console.error(`Substack failed for "${query}":`, res.status, await res.text());
+          console.error(`Substack Firecrawl failed:`, res.status, await res.text());
         }
       } catch (e) { console.error("Substack error:", e); }
       return docs;
