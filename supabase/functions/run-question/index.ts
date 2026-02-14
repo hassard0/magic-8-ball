@@ -77,7 +77,26 @@ serve(async (req) => {
       throw new Error("Data collection failed");
     }
 
-    // Step 2: Analyze sentiment
+    // Step 2: Filter irrelevant documents
+    const filterResponse = await fetch(`${supabaseUrl}/functions/v1/filter-relevance`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${serviceKey}`,
+      },
+      body: JSON.stringify({ questionId }),
+    });
+
+    if (!filterResponse.ok) {
+      const err = await filterResponse.text();
+      console.error("Filter relevance error:", err);
+      // Non-fatal: continue with unfiltered docs
+    } else {
+      const filterData = await filterResponse.json();
+      console.log(`Relevance filter: kept ${filterData.kept}, removed ${filterData.removed}`);
+    }
+
+    // Step 3: Analyze sentiment
     const analyzeResponse = await fetch(`${supabaseUrl}/functions/v1/analyze-sentiment`, {
       method: "POST",
       headers: {
