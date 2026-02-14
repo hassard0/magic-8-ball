@@ -185,11 +185,11 @@ export default function Results() {
       <div className="space-y-6">
         {/* Back & title */}
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
+          <Button variant="outline" size="icon" onClick={() => navigate(-1)} className="shrink-0">
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <div className="flex-1">
-            <h1 className="text-lg font-semibold tracking-tight">{question.question_text}</h1>
+          <div className="flex-1 min-w-0">
+            <h1 className="text-lg font-semibold tracking-tight text-foreground">{question.question_text}</h1>
             <div className="flex items-center gap-2 mt-1">
               <StatusBadge status={question.status} />
               <span className="text-xs text-muted-foreground font-mono">
@@ -197,9 +197,9 @@ export default function Results() {
               </span>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             {(question.status === "complete" || question.status === "failed") && (
-              <Button variant="outline" size="sm" onClick={handleRerun} disabled={rerunning}>
+              <Button variant="secondary" size="sm" onClick={handleRerun} disabled={rerunning}>
                 <RotateCcw className={`h-4 w-4 mr-1.5 ${rerunning ? "animate-spin" : ""}`} />
                 {rerunning ? "Re-running…" : "Re-run"}
               </Button>
