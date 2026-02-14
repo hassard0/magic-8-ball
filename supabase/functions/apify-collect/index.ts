@@ -26,7 +26,7 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    const timeRangeDays = timeRange === "7d" ? 7 : timeRange === "90d" ? 90 : 30;
+    const timeRangeDays = timeRange === "7d" ? 7 : timeRange === "90d" ? 90 : timeRange === "180d" ? 180 : timeRange === "1y" ? 365 : 30;
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - timeRangeDays);
     const cutoffTimestamp = Math.floor(cutoffDate.getTime() / 1000);
@@ -131,7 +131,7 @@ serve(async (req) => {
           body: JSON.stringify({
             query: searchQuery,
             limit: 15,
-            tbs: timeRangeDays <= 7 ? "qdr:w" : timeRangeDays <= 30 ? "qdr:m" : "qdr:y",
+            tbs: timeRangeDays <= 7 ? "qdr:w" : timeRangeDays <= 30 ? "qdr:m" : timeRangeDays <= 180 ? "qdr:m6" : "qdr:y",
             scrapeOptions: { formats: ["markdown"] },
           }),
         });

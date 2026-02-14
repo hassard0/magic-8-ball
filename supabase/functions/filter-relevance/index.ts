@@ -57,9 +57,11 @@ serve(async (req) => {
     // Process all batches in parallel to avoid wall-clock timeout
     const batchResults = await Promise.allSettled(
       batches.map(async (batch, batchIdx) => {
-        const docList = batch.map((d, idx) =>
-          `[${idx + 1}] (uuid: ${d.id}) Source: ${d.source} | Author: ${d.author || "unknown"}\n${d.text.slice(0, 200)}`
-        ).join("\n\n");
+        const docList = batch.map((d, idx) => {
+          // Show more text for long-form sources like Substack so relevance isn't misjudged
+          const previewLen = d.source === "substack" ? 600 : 250;
+          return `[${idx + 1}] (uuid: ${d.id}) Source: ${d.source} | Author: ${d.author || "unknown"}\n${d.text.slice(0, previewLen)}`;
+        }).join("\n\n");
 
         const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
           method: "POST",
