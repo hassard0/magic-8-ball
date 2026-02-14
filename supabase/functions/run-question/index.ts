@@ -29,7 +29,33 @@ serve(async (req) => {
 
     if (qErr || !question) throw new Error("Question not found");
 
-    // Step 1: Collect data via Apify
+    // Step 0: Optimize search queries via Gemini
+    let optimizedQueries: Record<string, string[]> = {};
+    try {
+      const optimizeResponse = await fetch(`${supabaseUrl}/functions/v1/optimize-queries`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${serviceKey}`,
+        },
+        body: JSON.stringify({
+          questionText: question.question_text,
+          sources: question.sources,
+        }),
+      });
+
+      if (optimizeResponse.ok) {
+        const optimizeData = await optimizeResponse.json();
+        optimizedQueries = optimizeData.queries || {};
+        console.log("Using optimized queries:", JSON.stringify(optimizedQueries));
+      } else {
+        console.error("Optimize queries failed, using original question as fallback");
+      }
+    } catch (e) {
+      console.error("Optimize queries error:", e);
+    }
+
+    // Step 1: Collect data via Apify (with optimized queries)
     const collectResponse = await fetch(`${supabaseUrl}/functions/v1/apify-collect`, {
       method: "POST",
       headers: {
@@ -41,6 +67,7 @@ serve(async (req) => {
         questionText: question.question_text,
         sources: question.sources,
         timeRange: question.time_range,
+        optimizedQueries,
       }),
     });
 
