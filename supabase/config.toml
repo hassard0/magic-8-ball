@@ -1,1 +1,16 @@
 project_id = "iwaruroumrowiinwwntz"
+
+[functions.run-question]
+verify_jwt = false
+
+[functions.apify-collect]
+verify_jwt = false
+
+[functions.analyze-sentiment]
+verify_jwt = false
+
+[functions.invite-user]
+verify_jwt = false
+
+[functions.accept-invite]
+verify_jwt = false

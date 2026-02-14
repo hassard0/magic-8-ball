@@ -1,0 +1,153 @@
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+};
+
+serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+
+  try {
+    const { questionId, questionText, sources, timeRange } = await req.json();
+    const APIFY_API_KEY = Deno.env.get("APIFY_API_KEY");
+    if (!APIFY_API_KEY) throw new Error("APIFY_API_KEY not configured");
+
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    );
+
+    const timeRangeDays = timeRange === "7d" ? 7 : timeRange === "90d" ? 90 : 30;
+
+    const allDocuments: any[] = [];
+
+    // Reddit search via Apify
+    if (sources.includes("reddit")) {
+      try {
+        const runRes = await fetch("https://api.apify.com/v2/acts/trudax~reddit-scraper-lite/run-sync-get-dataset-items?token=" + APIFY_API_KEY, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            searches: [questionText],
+            maxItems: 50,
+            sort: "relevance",
+            time: timeRangeDays <= 7 ? "week" : timeRangeDays <= 30 ? "month" : "year",
+          }),
+        });
+
+        if (runRes.ok) {
+          const items = await runRes.json();
+          for (const item of items || []) {
+            allDocuments.push({
+              question_id: questionId,
+              source: "reddit",
+              url: item.url || item.permalink || null,
+              author: item.author || item.username || null,
+              text: item.body || item.title || item.text || "",
+              date: item.createdAt || item.created || null,
+              engagement_metrics: { score: item.score, comments: item.numComments || item.numberOfComments },
+            });
+          }
+        } else {
+          console.error("Reddit scrape failed:", await runRes.text());
+        }
+      } catch (e) { console.error("Reddit error:", e); }
+    }
+
+    // Hacker News search
+    if (sources.includes("hackernews")) {
+      try {
+        const hnRes = await fetch(`https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(questionText)}&tags=story&hitsPerPage=50`);
+        if (hnRes.ok) {
+          const hnData = await hnRes.json();
+          for (const hit of hnData.hits || []) {
+            allDocuments.push({
+              question_id: questionId,
+              source: "hackernews",
+              url: hit.url || `https://news.ycombinator.com/item?id=${hit.objectID}`,
+              author: hit.author || null,
+              text: hit.title || hit.story_text || "",
+              date: hit.created_at || null,
+              engagement_metrics: { points: hit.points, comments: hit.num_comments },
+            });
+          }
+
+          // Also get comments for top stories
+          for (const hit of (hnData.hits || []).slice(0, 5)) {
+            try {
+              const commentsRes = await fetch(`https://hn.algolia.com/api/v1/search?tags=comment,story_${hit.objectID}&hitsPerPage=20`);
+              if (commentsRes.ok) {
+                const commentsData = await commentsRes.json();
+                for (const comment of commentsData.hits || []) {
+                  if (comment.comment_text) {
+                    allDocuments.push({
+                      question_id: questionId,
+                      source: "hackernews",
+                      url: `https://news.ycombinator.com/item?id=${comment.objectID}`,
+                      author: comment.author || null,
+                      text: comment.comment_text.replace(/<[^>]+>/g, ""),
+                      date: comment.created_at || null,
+                      engagement_metrics: { points: comment.points },
+                    });
+                  }
+                }
+              }
+            } catch {}
+          }
+        }
+      } catch (e) { console.error("HN error:", e); }
+    }
+
+    // Substack search via Apify
+    if (sources.includes("substack")) {
+      try {
+        const runRes = await fetch("https://api.apify.com/v2/acts/curious_coder~substack-scraper/run-sync-get-dataset-items?token=" + APIFY_API_KEY, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            searchTerms: [questionText],
+            maxItems: 30,
+          }),
+        });
+
+        if (runRes.ok) {
+          const items = await runRes.json();
+          for (const item of items || []) {
+            allDocuments.push({
+              question_id: questionId,
+              source: "substack",
+              url: item.url || item.canonical_url || null,
+              author: item.author || item.publishedBylines?.[0]?.name || null,
+              text: item.subtitle || item.description || item.title || "",
+              date: item.post_date || item.publishedAt || null,
+              engagement_metrics: { likes: item.reactions || 0 },
+            });
+          }
+        } else {
+          console.error("Substack scrape failed:", await runRes.text());
+        }
+      } catch (e) { console.error("Substack error:", e); }
+    }
+
+    // Insert documents
+    if (allDocuments.length > 0) {
+      const filtered = allDocuments.filter((d) => d.text && d.text.trim().length > 0);
+      if (filtered.length > 0) {
+        const { error } = await supabase.from("documents").insert(filtered);
+        if (error) console.error("Insert documents error:", error);
+      }
+    }
+
+    return new Response(JSON.stringify({ success: true, count: allDocuments.length }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  } catch (error) {
+    console.error("apify-collect error:", error);
+    return new Response(
+      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+});
