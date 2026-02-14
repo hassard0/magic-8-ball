@@ -87,7 +87,15 @@ export default function Results() {
   const dist = (analysis?.distribution as unknown as Distribution) || { positive: 0, neutral: 0, negative: 0 };
   const themes = (analysis?.themes as unknown as Theme[]) || [];
   const quotes = (analysis?.quotes as unknown as Quote[]) || [];
-  const sourceBreakdown = (analysis?.source_breakdown as unknown as Record<string, number>) || {};
+  const aiSourceBreakdown = (analysis?.source_breakdown as unknown as Record<string, number>) || {};
+  
+  // Compute source breakdown from actual documents if AI didn't provide it
+  const sourceBreakdown = Object.keys(aiSourceBreakdown).length > 0
+    ? aiSourceBreakdown
+    : documents.reduce<Record<string, number>>((acc, doc) => {
+        acc[doc.source] = (acc[doc.source] || 0) + 1;
+        return acc;
+      }, {});
 
   const pieData = [
     { name: "Positive", value: dist.positive, color: "hsl(var(--chart-positive))" },
