@@ -214,6 +214,7 @@ export type Database = {
           created_at: string
           id: string
           org_id: string
+          progress_step: string | null
           question_text: string
           sources: string[]
           status: Database["public"]["Enums"]["question_status"]
@@ -225,6 +226,7 @@ export type Database = {
           created_at?: string
           id?: string
           org_id: string
+          progress_step?: string | null
           question_text: string
           sources?: string[]
           status?: Database["public"]["Enums"]["question_status"]
@@ -236,6 +238,7 @@ export type Database = {
           created_at?: string
           id?: string
           org_id?: string
+          progress_step?: string | null
           question_text?: string
           sources?: string[]
           status?: Database["public"]["Enums"]["question_status"]

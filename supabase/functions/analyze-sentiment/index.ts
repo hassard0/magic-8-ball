@@ -56,11 +56,16 @@ serve(async (req) => {
 
     const systemPrompt = `You are a sentiment analysis expert. Analyze the following community discussions about the question: "${question.question_text}"
 
+USER INTENT: The user wants to understand public sentiment specifically about the topic in their question. When selecting quotes, ONLY include quotes that DIRECTLY discuss the specific company, product, or topic mentioned in the question. Discard any document or quote that merely mentions a keyword tangentially or discusses an unrelated subject.
+
 CRITICAL RULES FOR QUOTES:
+- EVERY quote MUST be directly relevant to the user's question — it should express an opinion, experience, or fact about the specific topic asked about.
+- Do NOT include quotes about unrelated products, companies, or topics even if they appear in the collected data.
 - You MUST select quotes from ALL source platforms present in the data (reddit, hackernews, substack, etc.), not just one.
 - Each quote's "url" field MUST be copied EXACTLY from the document's URL field — do NOT fabricate or guess URLs.
 - Each quote's "source" field MUST match the document's source platform name exactly.
 - Select at least 3 positive, 3 neutral, and 3 negative quotes for balanced coverage.
+- If there aren't enough relevant quotes for a sentiment category, include fewer rather than padding with irrelevant ones.
 
 You MUST call the "analyze_sentiment" function with your analysis results. Do not respond with plain text.`;
 

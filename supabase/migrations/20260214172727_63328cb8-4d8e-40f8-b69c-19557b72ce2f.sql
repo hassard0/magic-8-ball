@@ -1,0 +1,1 @@
+ALTER TABLE public.questions ADD COLUMN progress_step text DEFAULT null;

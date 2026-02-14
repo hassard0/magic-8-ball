@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ArrowLeft, ExternalLink, TrendingUp, TrendingDown, Minus, Shield, MessageSquare, Hash, RotateCcw, Trash2 } from "lucide-react";
+import { ArrowLeft, ExternalLink, TrendingUp, TrendingDown, Minus, Shield, MessageSquare, Hash, RotateCcw, Trash2, Search, Filter, BarChart3, Brain } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
   AlertDialog,
@@ -231,15 +231,43 @@ export default function Results() {
 
         {question.status !== "complete" ? (
           <Card>
-            <CardContent className="py-12 text-center">
-              <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-primary/10 animate-pulse-glow mb-4">
+            <CardContent className="py-12 text-center space-y-6">
+              <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-primary/10 animate-pulse-glow mb-2">
                 <span className="text-2xl">🎱</span>
               </div>
-              <p className="text-sm text-muted-foreground">
-                {question.status === "queued" && "Your question is queued and will be processed shortly..."}
-                {question.status === "running" && "Collecting data and analyzing sentiment..."}
-                {question.status === "failed" && "Analysis failed. Please try again."}
-              </p>
+              {question.status === "failed" ? (
+                <p className="text-sm text-muted-foreground">Analysis failed. Please try again.</p>
+              ) : (
+                <>
+                  <p className="text-sm text-muted-foreground">
+                    {(question as any).progress_step || (question.status === "queued" ? "Your question is queued..." : "Processing...")}
+                  </p>
+                  <div className="max-w-xs mx-auto space-y-3">
+                    {[
+                      { icon: Search, label: "Extract keywords", step: "Extracting" },
+                      { icon: BarChart3, label: "Collect data", step: "Collecting" },
+                      { icon: Filter, label: "Filter relevance", step: "Filtering" },
+                      { icon: Brain, label: "Analyze sentiment", step: "Analyzing" },
+                    ].map(({ icon: Icon, label, step }, i) => {
+                      const progressStep = (question as any).progress_step || "";
+                      const isActive = progressStep.toLowerCase().includes(step.toLowerCase());
+                      const stepOrder = ["Extracting", "Collecting", "Filtering", "Analyzing"];
+                      const currentIdx = stepOrder.findIndex(s => progressStep.toLowerCase().includes(s.toLowerCase()));
+                      const isDone = currentIdx > i;
+                      return (
+                        <div key={i} className={`flex items-center gap-3 text-sm transition-all ${isActive ? "text-primary font-medium" : isDone ? "text-muted-foreground" : "text-muted-foreground/40"}`}>
+                          <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${isActive ? "bg-primary/15 animate-pulse" : isDone ? "bg-primary/10" : "bg-muted"}`}>
+                            <Icon className="h-3 w-3" />
+                          </div>
+                          <span>{label}</span>
+                          {isDone && <span className="ml-auto text-xs text-chart-positive">✓</span>}
+                          {isActive && <span className="ml-auto text-xs text-primary animate-pulse">●</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
             </CardContent>
           </Card>
         ) : analysis ? (
