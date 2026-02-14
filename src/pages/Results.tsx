@@ -7,7 +7,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ArrowLeft, ExternalLink, TrendingUp, TrendingDown, Minus, Shield, MessageSquare, Hash } from "lucide-react";
+import { ArrowLeft, ExternalLink, TrendingUp, TrendingDown, Minus, Shield, MessageSquare, Hash, RotateCcw } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from "recharts";
 import type { Tables, Json } from "@/integrations/supabase/types";
 
@@ -26,7 +27,8 @@ export default function Results() {
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
-
+  const [rerunning, setRerunning] = useState(false);
+  const { toast } = useToast();
   useEffect(() => {
     if (!id) return;
 
@@ -61,6 +63,36 @@ export default function Results() {
 
     return () => { supabase.removeChannel(channel); };
   }, [id]);
+
+  const handleRerun = async () => {
+    if (!question || !id) return;
+    setRerunning(true);
+    try {
+      // Delete old results and documents
+      await Promise.all([
+        supabase.from("analysis_results").delete().eq("question_id", id),
+        supabase.from("documents").delete().eq("question_id", id),
+      ]);
+      setAnalysis(null);
+      setDocuments([]);
+
+      // Reset status to queued
+      await supabase.from("questions").update({ status: "queued" }).eq("id", id);
+      setQuestion((prev) => prev ? { ...prev, status: "queued" } : prev);
+
+      // Trigger run-question
+      const { error } = await supabase.functions.invoke("run-question", {
+        body: { questionId: id },
+      });
+      if (error) throw error;
+      toast({ title: "Re-running analysis", description: "Collecting fresh data and analyzing..." });
+    } catch (err) {
+      console.error("Rerun error:", err);
+      toast({ title: "Error", description: "Failed to re-run. Please try again.", variant: "destructive" });
+    } finally {
+      setRerunning(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -129,7 +161,7 @@ export default function Results() {
           <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <div>
+          <div className="flex-1">
             <h1 className="text-lg font-semibold tracking-tight">{question.question_text}</h1>
             <div className="flex items-center gap-2 mt-1">
               <StatusBadge status={question.status} />
@@ -138,6 +170,12 @@ export default function Results() {
               </span>
             </div>
           </div>
+          {(question.status === "complete" || question.status === "failed") && (
+            <Button variant="outline" size="sm" onClick={handleRerun} disabled={rerunning}>
+              <RotateCcw className={`h-4 w-4 mr-1.5 ${rerunning ? "animate-spin" : ""}`} />
+              {rerunning ? "Re-running…" : "Re-run"}
+            </Button>
+          )}
         </div>
 
         {question.status !== "complete" ? (
