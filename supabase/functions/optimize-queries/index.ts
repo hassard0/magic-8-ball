@@ -15,14 +15,20 @@ serve(async (req) => {
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
 
-    const systemPrompt = `You are a search query optimization expert. Given a user's question about public sentiment or opinions, generate optimized search queries for each specified platform.
+    const systemPrompt = `You are a search query optimization expert. Given a user's question about public sentiment, generate simple search queries for each platform.
 
-Rules:
-- For Reddit: Generate 2-3 search queries that would find relevant discussions. Include subreddit-specific terms if applicable. Think about how Redditors discuss topics.
-- For Hacker News: Generate 2-3 search queries optimized for the tech-savvy HN audience. Use precise technical terms, company names, product names.
-- For Substack: Generate 2-3 search queries that would find relevant newsletter posts and analysis pieces. Think about how writers title their articles.
+CRITICAL RULES:
+- Keep queries SIMPLE: 2-4 plain words, NO quotes, NO special syntax, NO subreddit prefixes like "r/webdev"
+- Use the core subject/company name in every query
+- Vary the angle: one broad query, one about opinions/reactions, one about alternatives or comparisons
+- Think about what terms people ACTUALLY use when discussing this topic
+- The queries will be used with basic search APIs, so simpler = better results
+- For Reddit: Think about how people title posts when complaining or discussing something
+- For Hacker News: Use the company/product name plus simple descriptors
+- For Substack: Think about how newsletter writers title their analysis
 
-Each query should be concise (2-6 words), diverse in angle, and designed to surface opinionated content rather than just informational content.`;
+BAD examples: "r/webdev Auth0 expensive", '"Auth0" pricing "rip off"', "Auth0 enterprise pricing criticism"
+GOOD examples: "Auth0 pricing", "Auth0 expensive alternative", "Auth0 review"`;
 
     const userPrompt = `Question: "${questionText}"
 Platforms to optimize for: ${sources.join(", ")}
