@@ -51,10 +51,16 @@ serve(async (req) => {
 
     // Prepare document summaries for the AI (limit to first 100 to stay within token limits)
     const docSummaries = documents.slice(0, 100).map((d, i) =>
-      `[${i + 1}] Source: ${d.source} | Author: ${d.author || "unknown"} | Date: ${d.date || "unknown"}\n${d.text.slice(0, 500)}`
+      `[${i + 1}] Source: ${d.source} | Author: ${d.author || "unknown"} | Date: ${d.date || "unknown"} | URL: ${d.url || "none"}\n${d.text.slice(0, 500)}`
     ).join("\n\n");
 
     const systemPrompt = `You are a sentiment analysis expert. Analyze the following community discussions about the question: "${question.question_text}"
+
+CRITICAL RULES FOR QUOTES:
+- You MUST select quotes from ALL source platforms present in the data (reddit, hackernews, substack, etc.), not just one.
+- Each quote's "url" field MUST be copied EXACTLY from the document's URL field — do NOT fabricate or guess URLs.
+- Each quote's "source" field MUST match the document's source platform name exactly.
+- Select at least 3 positive, 3 neutral, and 3 negative quotes for balanced coverage.
 
 You MUST call the "analyze_sentiment" function with your analysis results. Do not respond with plain text.`;
 
