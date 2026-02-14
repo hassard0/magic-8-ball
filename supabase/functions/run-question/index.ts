@@ -18,7 +18,7 @@ serve(async (req) => {
     const supabase = createClient(supabaseUrl, serviceKey);
 
     // Mark as running
-    await supabase.from("questions").update({ status: "running" }).eq("id", questionId);
+    await supabase.from("questions").update({ status: "running", progress_step: "Extracting search keywords..." }).eq("id", questionId);
 
     // Get question details
     const { data: question, error: qErr } = await supabase
@@ -56,6 +56,7 @@ serve(async (req) => {
     }
 
     // Step 1: Collect data via Apify (with optimized queries)
+    await supabase.from("questions").update({ progress_step: "Collecting data from sources..." }).eq("id", questionId);
     const collectResponse = await fetch(`${supabaseUrl}/functions/v1/apify-collect`, {
       method: "POST",
       headers: {
@@ -78,6 +79,7 @@ serve(async (req) => {
     }
 
     // Step 2: Filter irrelevant documents
+    await supabase.from("questions").update({ progress_step: "Filtering for relevance..." }).eq("id", questionId);
     const filterResponse = await fetch(`${supabaseUrl}/functions/v1/filter-relevance`, {
       method: "POST",
       headers: {
@@ -97,6 +99,7 @@ serve(async (req) => {
     }
 
     // Step 3: Analyze sentiment
+    await supabase.from("questions").update({ progress_step: "Analyzing sentiment..." }).eq("id", questionId);
     const analyzeResponse = await fetch(`${supabaseUrl}/functions/v1/analyze-sentiment`, {
       method: "POST",
       headers: {
@@ -113,7 +116,7 @@ serve(async (req) => {
     }
 
     // Mark as complete
-    await supabase.from("questions").update({ status: "complete" }).eq("id", questionId);
+    await supabase.from("questions").update({ status: "complete", progress_step: null }).eq("id", questionId);
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
