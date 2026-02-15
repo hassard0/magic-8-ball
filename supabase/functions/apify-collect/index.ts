@@ -131,48 +131,46 @@ serve(async (req) => {
       return docs;
     };
 
-    // Helper for X (Twitter) via Apify - viralanalyzer/twitter-scraper (free, pay-per-usage)
-    const fetchX = async (queries: string[]) => {
+    // Helper for X (Twitter) via Apify - runs each query in PARALLEL to avoid sequential timeout
+    const fetchXQuery = async (query: string) => {
       const docs: any[] = [];
       try {
-        console.log("X/Twitter: searching with queries:", queries);
-        for (const query of queries) {
-          const runRes = await fetchWithTimeout("https://api.apify.com/v2/acts/viralanalyzer~twitter-scraper/run-sync-get-dataset-items?token=" + APIFY_API_KEY, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              searchQuery: query,
-              maxTweets: 30,
-              tweetType: "top",
-            }),
-          });
-          if (runRes.ok) {
-            const items = await runRes.json();
-            console.log(`X/Twitter results for "${query}": ${(items || []).length}`);
-            for (const item of items || []) {
-              const text = item.full_text || item.text || item.tweet_text || "";
-              if (text.trim().length > 0) {
-                docs.push({
-                  question_id: questionId, source: "x",
-                  url: item.tweet_url || item.url || null,
-                  author: item.username || item.screen_name || item.user?.screen_name || null,
-                  text: text.slice(0, 1500),
-                  date: item.created_at || item.date || null,
-                  engagement_metrics: {
-                    likes: item.likes || item.favorite_count || 0,
-                    retweets: item.retweets || item.retweet_count || 0,
-                    replies: item.replies || item.reply_count || 0,
-                    views: item.views || 0,
-                  },
-                });
-              }
+        console.log(`X/Twitter: searching "${query}"`);
+        const runRes = await fetchWithTimeout("https://api.apify.com/v2/acts/viralanalyzer~twitter-scraper/run-sync-get-dataset-items?token=" + APIFY_API_KEY, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            searchQuery: query,
+            maxTweets: 20,
+            tweetType: "top",
+          }),
+        });
+        if (runRes.ok) {
+          const items = await runRes.json();
+          console.log(`X/Twitter results for "${query}": ${(items || []).length}`);
+          for (const item of items || []) {
+            const text = item.full_text || item.text || item.tweet_text || "";
+            if (text.trim().length > 0) {
+              docs.push({
+                question_id: questionId, source: "x",
+                url: item.tweet_url || item.url || null,
+                author: item.username || item.screen_name || item.user?.screen_name || null,
+                text: text.slice(0, 1500),
+                date: item.created_at || item.date || null,
+                engagement_metrics: {
+                  likes: item.likes || item.favorite_count || 0,
+                  retweets: item.retweets || item.retweet_count || 0,
+                  replies: item.replies || item.reply_count || 0,
+                  views: item.views || 0,
+                },
+              });
             }
-          } else {
-            const errText = await runRes.text();
-            console.error("X/Twitter Apify failed:", runRes.status, errText);
           }
+        } else {
+          const errText = await runRes.text();
+          console.error(`X/Twitter Apify failed for "${query}":`, runRes.status, errText);
         }
-      } catch (e) { console.error("X/Twitter error:", e); }
+      } catch (e) { console.error(`X/Twitter error for "${query}":`, e); }
       return docs;
     };
 
@@ -292,7 +290,7 @@ serve(async (req) => {
     if (sources.includes("x")) {
       const queries = getQueries("x");
       console.log("X/Twitter queries:", queries);
-      tasks.push(withSourceTimeout(fetchX(queries), "X/Twitter"));
+      for (const q of queries) tasks.push(withSourceTimeout(fetchXQuery(q), `X:${q}`));
     }
     if (sources.includes("stackoverflow")) {
       const queries = getQueries("stackoverflow");
