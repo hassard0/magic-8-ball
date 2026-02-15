@@ -53,37 +53,48 @@ serve(async (req) => {
 
     const allDocuments: any[] = [];
 
-    // Helper to collect Reddit results - sends ALL queries in one Apify call
+    // Helper for Reddit — uses Reddit's native JSON API (free, fast, no Apify needed)
     const fetchReddit = async (queries: string[]) => {
       const docs: any[] = [];
       try {
-        console.log("Reddit: sending all queries in one call:", queries);
-        const runRes = await fetchWithTimeout("https://api.apify.com/v2/acts/trudax~reddit-scraper-lite/run-sync-get-dataset-items?token=" + APIFY_API_KEY, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            searches: queries,
-            maxItems: 250,
-            sort: "relevance",
-            time: timeRangeDays <= 7 ? "week" : timeRangeDays <= 30 ? "month" : "year",
-          }),
-        });
-        if (runRes.ok) {
-          const items = await runRes.json();
-          console.log(`Reddit results: ${(items || []).length}`);
-          for (const item of items || []) {
-            docs.push({
-              question_id: questionId, source: "reddit",
-              url: item.url || item.permalink || null,
-              author: item.author || item.username || null,
-              text: item.body || item.title || item.text || "",
-              date: item.createdAt || item.created || null,
-              engagement_metrics: { score: item.score, comments: item.numComments || item.numberOfComments },
-            });
-          }
-        } else { 
-          const errText = await runRes.text();
-          console.error("Reddit failed:", runRes.status, errText); 
+        const timeParam = timeRangeDays <= 7 ? "week" : timeRangeDays <= 30 ? "month" : "year";
+        // Run all queries in parallel
+        const results = await Promise.allSettled(
+          queries.map(async (query) => {
+            console.log(`Reddit JSON API searching: "${query}" (t=${timeParam})`);
+            const res = await fetchWithTimeout(
+              `https://www.reddit.com/search.json?q=${encodeURIComponent(query)}&sort=relevance&t=${timeParam}&limit=100&type=link`,
+              { headers: { "User-Agent": "SentimentAnalyzer/1.0" } },
+              15000
+            );
+            if (!res.ok) {
+              console.error(`Reddit API failed for "${query}":`, res.status);
+              return [];
+            }
+            const data = await res.json();
+            const posts = data?.data?.children || [];
+            console.log(`Reddit results for "${query}": ${posts.length}`);
+            const localDocs: any[] = [];
+            for (const post of posts) {
+              const p = post.data;
+              if (!p) continue;
+              const text = (p.title || "") + (p.selftext ? "\n" + p.selftext : "");
+              if (text.trim().length > 0) {
+                localDocs.push({
+                  question_id: questionId, source: "reddit",
+                  url: p.url || `https://reddit.com${p.permalink}` || null,
+                  author: p.author || null,
+                  text: text.slice(0, 2000),
+                  date: p.created_utc ? new Date(p.created_utc * 1000).toISOString() : null,
+                  engagement_metrics: { score: p.score, comments: p.num_comments, upvote_ratio: p.upvote_ratio },
+                });
+              }
+            }
+            return localDocs;
+          })
+        );
+        for (const r of results) {
+          if (r.status === "fulfilled") docs.push(...r.value);
         }
       } catch (e) { console.error("Reddit error:", e); }
       return docs;
@@ -132,20 +143,20 @@ serve(async (req) => {
       return docs;
     };
 
-    // Helper for X (Twitter) via Apify - powerai/twitter-search-scraper
+    // Helper for X (Twitter) via Apify - xtdata/twitter-x-scraper (1.2K users, 99.9% success, 4.3★)
     const fetchXQuery = async (query: string) => {
       const docs: any[] = [];
       try {
         console.log(`X/Twitter: searching "${query}"`);
         const runRes = await fetchWithTimeout(
-          "https://api.apify.com/v2/acts/powerai~twitter-search-scraper/run-sync-get-dataset-items?token=" + APIFY_API_KEY,
+          "https://api.apify.com/v2/acts/xtdata~twitter-x-scraper/run-sync-get-dataset-items?token=" + APIFY_API_KEY,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              query: query,
-              searchType: "Top",
-              maxResults: 250,
+              searchTerms: [query],
+              maxItems: 100,
+              sort: "Top",
             }),
           },
           40000
@@ -158,8 +169,8 @@ serve(async (req) => {
             if (text.trim().length > 0) {
               docs.push({
                 question_id: questionId, source: "x",
-                url: item.tweet_url || item.url || item.link || null,
-                author: item.username || item.screen_name || item.author || item.user?.screen_name || null,
+                url: item.url || item.tweet_url || item.tweetUrl || null,
+                author: item.user_name || item.username || item.screen_name || item.author || null,
                 text: text.slice(0, 1500),
                 date: item.created_at || item.date || item.timestamp || null,
                 engagement_metrics: {
