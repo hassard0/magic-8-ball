@@ -57,6 +57,17 @@ export default function Results() {
 
     fetchData();
 
+    // Auto-recover stuck questions (running for > 3 minutes)
+    const staleCheck = setInterval(async () => {
+      const { data: q } = await supabase.from("questions").select("status, updated_at").eq("id", id).single();
+      if (q && q.status === "running") {
+        const staleSince = Date.now() - new Date(q.updated_at).getTime();
+        if (staleSince > 3 * 60 * 1000) {
+          await supabase.from("questions").update({ status: "failed", progress_step: null }).eq("id", id);
+        }
+      }
+    }, 30000);
+
     // Poll for running questions
     const channel = supabase
       .channel(`question-${id}`)
@@ -73,7 +84,7 @@ export default function Results() {
       })
       .subscribe();
 
-    return () => { supabase.removeChannel(channel); };
+    return () => { clearInterval(staleCheck); supabase.removeChannel(channel); };
   }, [id]);
 
   const handleRerun = async () => {
