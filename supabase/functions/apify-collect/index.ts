@@ -7,14 +7,14 @@ const corsHeaders = {
 };
 
 /** Wrap a fetch with a per-source timeout so one slow source can't block everything */
-function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = 25000): Promise<Response> {
+function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = 40000): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   return fetch(url, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer));
 }
 
 /** Wrap a source task with a timeout — returns empty array on timeout instead of failing */
-function withSourceTimeout<T>(promise: Promise<T[]>, label: string, timeoutMs = 30000): Promise<T[]> {
+function withSourceTimeout<T>(promise: Promise<T[]>, label: string, timeoutMs = 45000): Promise<T[]> {
   return Promise.race([
     promise,
     new Promise<T[]>((resolve) => {
@@ -131,51 +131,48 @@ serve(async (req) => {
       return docs;
     };
 
-    // Helper for X (Twitter) via Firecrawl site:x.com search (fast, reliable)
+    // Helper for X (Twitter) via Apify - powerai/twitter-search-scraper (279 users, simple API)
     const fetchXQuery = async (query: string) => {
       const docs: any[] = [];
       try {
-        const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY");
-        if (!FIRECRAWL_API_KEY) {
-          console.error("FIRECRAWL_API_KEY not configured, skipping X/Twitter");
-          return docs;
-        }
-        console.log(`X/Twitter (Firecrawl): searching "${query}"`);
-        const res = await fetchWithTimeout("https://api.firecrawl.dev/v1/search", {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${FIRECRAWL_API_KEY}`,
-            "Content-Type": "application/json",
+        console.log(`X/Twitter: searching "${query}"`);
+        const runRes = await fetchWithTimeout(
+          "https://api.apify.com/v2/acts/powerai~twitter-search-scraper/run-sync-get-dataset-items?token=" + APIFY_API_KEY,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              query: query,
+              searchType: "Top",
+              maxResults: 30,
+            }),
           },
-          body: JSON.stringify({
-            query: `site:x.com ${query}`,
-            limit: 20,
-            scrapeOptions: { formats: ["markdown"] },
-          }),
-        }, 20000);
-        if (res.ok) {
-          const data = await res.json();
-          const results = data?.data || [];
-          console.log(`X/Twitter (Firecrawl) results for "${query}": ${results.length}`);
-          for (const item of results) {
-            const url = item.url || "";
-            if (!url.includes("x.com") && !url.includes("twitter.com")) continue;
-            const text = item.markdown || item.description || "";
+          40000
+        );
+        if (runRes.ok) {
+          const items = await runRes.json();
+          console.log(`X/Twitter results for "${query}": ${(items || []).length}`);
+          for (const item of items || []) {
+            const text = item.full_text || item.text || item.tweet_text || item.content || "";
             if (text.trim().length > 0) {
-              // Try to extract author from x.com URL pattern: x.com/username/status/...
-              const authorMatch = url.match(/x\.com\/([^/]+)\//);
               docs.push({
                 question_id: questionId, source: "x",
-                url: url || null,
-                author: authorMatch?.[1] || null,
+                url: item.tweet_url || item.url || item.link || null,
+                author: item.username || item.screen_name || item.author || item.user?.screen_name || null,
                 text: text.slice(0, 1500),
-                date: item.metadata?.publishedTime || null,
-                engagement_metrics: {},
+                date: item.created_at || item.date || item.timestamp || null,
+                engagement_metrics: {
+                  likes: item.likes || item.favorite_count || item.likeCount || 0,
+                  retweets: item.retweets || item.retweet_count || item.retweetCount || 0,
+                  replies: item.replies || item.reply_count || item.replyCount || 0,
+                  views: item.views || item.viewCount || 0,
+                },
               });
             }
           }
         } else {
-          console.error(`X/Twitter Firecrawl failed for "${query}":`, res.status, await res.text());
+          const errText = await runRes.text();
+          console.error(`X/Twitter failed for "${query}":`, runRes.status, errText);
         }
       } catch (e) { console.error(`X/Twitter error for "${query}":`, e); }
       return docs;
@@ -302,7 +299,7 @@ serve(async (req) => {
     if (sources.includes("stackoverflow")) {
       const queries = getQueries("stackoverflow");
       console.log("StackOverflow queries:", queries);
-      for (const q of queries) tasks.push(withSourceTimeout(fetchStackOverflow(q), `SO:${q}`, 15000));
+      for (const q of queries) tasks.push(withSourceTimeout(fetchStackOverflow(q), `SO:${q}`, 20000));
     }
 
     const settled = await Promise.allSettled(tasks);
