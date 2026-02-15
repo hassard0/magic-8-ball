@@ -6,7 +6,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = 30000): Promise<Response> {
+function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = 45000): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   return fetch(url, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer));
@@ -73,7 +73,7 @@ serve(async (req) => {
                   sort: sortParam,
                 }),
               },
-              35000
+              50000
             );
             if (!res.ok) {
               console.error(`Reddit Apify failed for "${query}":`, res.status, await res.text());
@@ -223,18 +223,38 @@ serve(async (req) => {
         }
         const items = await res.json();
         console.log(`StackOverflow Apify results for "${query}": ${(items || []).length}`);
+        if ((items || []).length > 0) {
+          console.log(`StackOverflow sample item keys:`, JSON.stringify(Object.keys(items[0])));
+          console.log(`StackOverflow sample date fields:`, JSON.stringify({
+            creation_date: items[0].creation_date, createdAt: items[0].createdAt,
+            date: items[0].date, last_activity_date: items[0].last_activity_date,
+            created: items[0].created, timestamp: items[0].timestamp,
+          }));
+        }
         const docs: any[] = [];
         for (const item of items || []) {
           const body = (item.body || item.content || "").replace(/<[^>]+>/g, "");
           const title = item.title || "";
           const text = title + (body ? "\n" + body : "");
           if (text.trim().length > 0) {
+            // Try multiple date formats: unix seconds, unix ms, ISO string
+            let dateStr: string | null = null;
+            const rawDate = item.creation_date || item.createdAt || item.date || item.last_activity_date || item.created || item.timestamp;
+            if (rawDate) {
+              if (typeof rawDate === "number") {
+                // If < 1e12 it's seconds, otherwise ms
+                dateStr = new Date(rawDate < 1e12 ? rawDate * 1000 : rawDate).toISOString();
+              } else if (typeof rawDate === "string") {
+                const parsed = new Date(rawDate);
+                if (!isNaN(parsed.getTime())) dateStr = parsed.toISOString();
+              }
+            }
             docs.push({
               question_id: questionId, source: "stackoverflow",
               url: item.link || item.url || null,
               author: item.owner?.display_name || item.author || null,
               text: text.slice(0, 2000),
-              date: item.creation_date ? new Date(item.creation_date * 1000).toISOString() : item.createdAt || item.date || null,
+              date: dateStr,
               engagement_metrics: { score: item.score || 0, answers: item.answer_count || 0, views: item.view_count || 0 },
             });
           }
