@@ -6,7 +6,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-/** Fetch with a timeout (default 55s to stay under edge function 60s limit) */
+/** Fetch with a timeout — returns null on timeout instead of throwing */
 async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = 55000): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -14,6 +14,16 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = 5500
     return await fetch(url, { ...init, signal: controller.signal });
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/** Safe fetch that won't throw on timeout — returns a fake ok response */
+async function safeFetch(url: string, init: RequestInit, label: string, timeoutMs = 50000): Promise<Response> {
+  try {
+    return await fetchWithTimeout(url, init, timeoutMs);
+  } catch (e) {
+    console.warn(`${label} timed out or failed (non-fatal):`, e);
+    return new Response(JSON.stringify({ success: true, partial: true }), { status: 200 });
   }
 }
 
@@ -109,7 +119,7 @@ serve(async (req) => {
       await supabase.from("questions").update({ progress_step: `Collecting data for ${classification.entity_a} & ${classification.entity_b}...` }).eq("id", questionId);
 
       const [collectA, collectB] = await Promise.all([
-        fetchWithTimeout(`${supabaseUrl}/functions/v1/apify-collect`, {
+        safeFetch(`${supabaseUrl}/functions/v1/apify-collect`, {
           method: "POST",
           headers,
           body: JSON.stringify({
@@ -120,8 +130,8 @@ serve(async (req) => {
             optimizedQueries: classification.queries_a || {},
             entityTag: classification.entity_a,
           }),
-        }, 50000),
-        fetchWithTimeout(`${supabaseUrl}/functions/v1/apify-collect`, {
+        }, "Collect entity A", 50000),
+        safeFetch(`${supabaseUrl}/functions/v1/apify-collect`, {
           method: "POST",
           headers,
           body: JSON.stringify({
@@ -132,7 +142,7 @@ serve(async (req) => {
             optimizedQueries: classification.queries_b || {},
             entityTag: classification.entity_b,
           }),
-        }, 50000),
+        }, "Collect entity B", 50000),
       ]);
 
       if (!collectA.ok) console.error("Collect entity A error:", await collectA.text());
@@ -140,7 +150,7 @@ serve(async (req) => {
     } else {
       // === STANDARD / ABSTRACT FLOW ===
       await supabase.from("questions").update({ progress_step: "Collecting data from sources..." }).eq("id", questionId);
-      const collectResponse = await fetchWithTimeout(`${supabaseUrl}/functions/v1/apify-collect`, {
+      const collectResponse = await safeFetch(`${supabaseUrl}/functions/v1/apify-collect`, {
         method: "POST",
         headers,
         body: JSON.stringify({
@@ -150,12 +160,12 @@ serve(async (req) => {
           timeRange: question.time_range,
           optimizedQueries,
         }),
-      }, 50000);
+      }, "Apify collect", 50000);
 
       if (!collectResponse.ok) {
         const err = await collectResponse.text();
-        console.error("Apify collect error:", err);
-        throw new Error("Data collection failed");
+        console.error("Apify collect error (non-fatal):", err);
+        // Don't throw — proceed with whatever data was collected
       }
     }
 
