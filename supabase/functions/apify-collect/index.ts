@@ -115,89 +115,92 @@ serve(async (req) => {
     const fetchX = async (queries: string[]) => {
       const docs: any[] = [];
       try {
-        // Use Firecrawl to search X/Twitter content since Apify actors are unreliable
-        const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY");
-        if (!FIRECRAWL_API_KEY) {
-          console.error("FIRECRAWL_API_KEY not configured, skipping X/Twitter");
-          return docs;
-        }
-
-        const seenUrls = new Set<string>();
-        for (const query of queries) {
-          const searches = [
-            `site:x.com ${query}`,
-            `site:twitter.com ${query}`,
-          ];
-          for (const searchQuery of searches) {
-            console.log(`X/Twitter (Firecrawl) searching: ${searchQuery}`);
-            const res = await fetch("https://api.firecrawl.dev/v1/search", {
-              method: "POST",
-              headers: {
-                "Authorization": `Bearer ${FIRECRAWL_API_KEY}`,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                query: searchQuery,
-                limit: 10,
-                scrapeOptions: { formats: ["markdown"] },
-              }),
-            });
-            if (res.ok) {
-              const data = await res.json();
-              const results = data?.data || [];
-              console.log(`X/Twitter (Firecrawl) results for "${searchQuery}": ${results.length}`);
-              for (const item of results) {
-                const url = item.url || "";
-                if (!url.includes("x.com") && !url.includes("twitter.com")) continue;
-                if (seenUrls.has(url)) continue;
-                seenUrls.add(url);
-
-                const text = item.markdown || item.description || "";
-                if (text.trim().length > 0) {
-                  docs.push({
-                    question_id: questionId, source: "x",
-                    url: url || null,
-                    author: item.metadata?.author || item.metadata?.ogSiteName || null,
-                    text: text.slice(0, 1500),
-                    date: item.metadata?.publishedTime || null,
-                    engagement_metrics: {},
-                  });
-                }
-              }
-            } else {
-              console.error(`X/Twitter Firecrawl failed:`, res.status, await res.text());
+        console.log("X/Twitter: searching with queries:", queries);
+        // Use Apify's X Twitter Posts Search actor
+        const searchUrls = queries.map(q => `https://x.com/search?q=${encodeURIComponent(q)}&f=top`);
+        const runRes = await fetch("https://api.apify.com/v2/acts/scrapier~x-twitter-posts-search/run-sync-get-dataset-items?token=" + APIFY_API_KEY, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            startUrls: searchUrls.map(url => ({ url })),
+            maxTweets: 50,
+            sortOrder: "top",
+          }),
+        });
+        if (runRes.ok) {
+          const items = await runRes.json();
+          console.log(`X/Twitter results: ${(items || []).length}`);
+          for (const item of items || []) {
+            const text = item.full_text || item.text || item.description || "";
+            if (text.trim().length > 0) {
+              docs.push({
+                question_id: questionId, source: "x",
+                url: item.url || null,
+                author: item.user_posted || item.name || item.author?.userName || null,
+                text: text.slice(0, 1500),
+                date: item.date_posted || item.created_at || item.createdAt || null,
+                engagement_metrics: {
+                  likes: item.likes || item.favorite_count || 0,
+                  retweets: item.rePosts || item.retweet_count || 0,
+                  replies: item.replies || item.reply_count || 0,
+                },
+              });
             }
           }
+        } else {
+          const errText = await runRes.text();
+          console.error("X/Twitter Apify failed:", runRes.status, errText);
         }
       } catch (e) { console.error("X/Twitter error:", e); }
       return docs;
     };
 
-    // Helper for Stack Overflow via their public API
+    // Helper for Stack Overflow via Firecrawl search
     const fetchStackOverflow = async (query: string) => {
       const docs: any[] = [];
       try {
-        const fromDate = Math.floor(cutoffDate.getTime() / 1000);
-        const url = `https://api.stackexchange.com/2.3/search/advanced?order=desc&sort=relevance&q=${encodeURIComponent(query)}&fromdate=${fromDate}&site=stackoverflow&pagesize=30`;
-        console.log(`StackOverflow searching: ${query}`);
-        const res = await fetch(url);
+        const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY");
+        if (!FIRECRAWL_API_KEY) {
+          console.error("FIRECRAWL_API_KEY not configured, skipping StackOverflow");
+          return docs;
+        }
+
+        const searchQuery = `site:stackoverflow.com ${query}`;
+        console.log(`StackOverflow (Firecrawl) searching: ${searchQuery}`);
+        const res = await fetch("https://api.firecrawl.dev/v1/search", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${FIRECRAWL_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            query: searchQuery,
+            limit: 15,
+            scrapeOptions: { formats: ["markdown"] },
+          }),
+        });
         if (res.ok) {
           const data = await res.json();
-          console.log(`StackOverflow results: ${(data.items || []).length}`);
-          for (const item of data.items || []) {
-            const text = item.title || "";
-            docs.push({
-              question_id: questionId, source: "stackoverflow",
-              url: item.link || null,
-              author: item.owner?.display_name || null,
-              text,
-              date: item.creation_date ? new Date(item.creation_date * 1000).toISOString() : null,
-              engagement_metrics: { score: item.score, answers: item.answer_count, views: item.view_count },
-            });
+          const results = data?.data || [];
+          console.log(`StackOverflow (Firecrawl) results: ${results.length}`);
+          for (const item of results) {
+            const url = item.url || "";
+            if (!url.includes("stackoverflow.com")) continue;
+
+            const text = item.markdown || item.description || "";
+            if (text.trim().length > 0) {
+              docs.push({
+                question_id: questionId, source: "stackoverflow",
+                url: url || null,
+                author: item.metadata?.author || null,
+                text: text.slice(0, 2000),
+                date: item.metadata?.publishedTime || null,
+                engagement_metrics: {},
+              });
+            }
           }
-          // No body available without API key filter, titles + metadata are sufficient for sentiment
         } else {
-          console.error("StackOverflow failed:", res.status, await res.text());
+          console.error("StackOverflow Firecrawl failed:", res.status, await res.text());
         }
       } catch (e) { console.error("StackOverflow error:", e); }
       return docs;
