@@ -6,24 +6,10 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-/** Wrap a fetch with a per-source timeout so one slow source can't block everything */
-function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = 40000): Promise<Response> {
+function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = 30000): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   return fetch(url, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer));
-}
-
-/** Wrap a source task with a timeout — returns empty array on timeout instead of failing */
-function withSourceTimeout<T>(promise: Promise<T[]>, label: string, timeoutMs = 45000): Promise<T[]> {
-  return Promise.race([
-    promise,
-    new Promise<T[]>((resolve) => {
-      setTimeout(() => {
-        console.warn(`${label}: timed out after ${timeoutMs / 1000}s, skipping`);
-        resolve([]);
-      }, timeoutMs);
-    }),
-  ]);
 }
 
 serve(async (req) => {
@@ -31,12 +17,9 @@ serve(async (req) => {
 
   try {
     const { questionId, questionText, sources, timeRange, optimizedQueries, entityTag } = await req.json();
-    // Use extracted keywords per platform — these are focused 1-3 word terms
     const getQueries = (platform: string): string[] => {
-      if (optimizedQueries && optimizedQueries[platform] && optimizedQueries[platform].length > 0) {
-        return optimizedQueries[platform];
-      }
-      return [questionText]; // fallback to original question
+      if (optimizedQueries?.[platform]?.length > 0) return optimizedQueries[platform];
+      return [questionText];
     };
     const APIFY_API_KEY = Deno.env.get("APIFY_API_KEY");
     if (!APIFY_API_KEY) throw new Error("APIFY_API_KEY not configured");
@@ -51,64 +34,92 @@ serve(async (req) => {
     cutoffDate.setDate(cutoffDate.getDate() - timeRangeDays);
     const cutoffTimestamp = Math.floor(cutoffDate.getTime() / 1000);
 
-    const allDocuments: any[] = [];
+    let totalInserted = 0;
 
-    // Helper for Reddit — uses Reddit's native JSON API (free, fast, no Apify needed)
+    /** Insert docs immediately for a source — don't wait for other sources */
+    const insertDocs = async (docs: any[]) => {
+      const filtered = docs.filter((d) => {
+        if (!d.text || d.text.trim().length === 0) return false;
+        if (d.date) {
+          const docDate = new Date(d.date);
+          if (!isNaN(docDate.getTime()) && docDate < cutoffDate) return false;
+        } else {
+          if (d.source !== "substack") return false;
+        }
+        return true;
+      });
+      if (filtered.length > 0) {
+        const { error } = await supabase.from("documents").insert(filtered);
+        if (error) console.error("Insert error:", error);
+        else totalInserted += filtered.length;
+      }
+      return filtered.length;
+    };
+
+    // ── Reddit via Apify (JSON API returns 403 from edge functions) ──
     const fetchReddit = async (queries: string[]) => {
-      const docs: any[] = [];
       try {
-        const timeParam = timeRangeDays <= 7 ? "week" : timeRangeDays <= 30 ? "month" : "year";
-        // Run all queries in parallel
+        const allDocs: any[] = [];
         const results = await Promise.allSettled(
           queries.map(async (query) => {
-            console.log(`Reddit JSON API searching: "${query}" (t=${timeParam})`);
+            console.log(`Reddit (Apify): searching "${query}"`);
             const res = await fetchWithTimeout(
-              `https://www.reddit.com/search.json?q=${encodeURIComponent(query)}&sort=relevance&t=${timeParam}&limit=100&type=link`,
-              { headers: { "User-Agent": "SentimentAnalyzer/1.0" } },
-              15000
+              "https://api.apify.com/v2/acts/trudax~reddit-scraper/run-sync-get-dataset-items?token=" + APIFY_API_KEY,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  searches: [query],
+                  maxPostCount: 100,
+                  sort: "relevance",
+                  time: timeRangeDays <= 7 ? "week" : timeRangeDays <= 30 ? "month" : "year",
+                  proxy: { useApifyProxy: true },
+                }),
+              },
+              35000
             );
             if (!res.ok) {
-              console.error(`Reddit API failed for "${query}":`, res.status);
+              console.error(`Reddit Apify failed for "${query}":`, res.status, await res.text());
               return [];
             }
-            const data = await res.json();
-            const posts = data?.data?.children || [];
-            console.log(`Reddit results for "${query}": ${posts.length}`);
-            const localDocs: any[] = [];
-            for (const post of posts) {
-              const p = post.data;
-              if (!p) continue;
-              const text = (p.title || "") + (p.selftext ? "\n" + p.selftext : "");
+            const items = await res.json();
+            console.log(`Reddit results for "${query}": ${(items || []).length}`);
+            const docs: any[] = [];
+            for (const item of items || []) {
+              const text = (item.title || "") + (item.body || item.selftext || item.text ? "\n" + (item.body || item.selftext || item.text) : "");
               if (text.trim().length > 0) {
-                localDocs.push({
+                docs.push({
                   question_id: questionId, source: "reddit",
-                  url: p.url || `https://reddit.com${p.permalink}` || null,
-                  author: p.author || null,
+                  url: item.url || item.permalink ? `https://reddit.com${item.permalink}` : null,
+                  author: item.author || item.username || null,
                   text: text.slice(0, 2000),
-                  date: p.created_utc ? new Date(p.created_utc * 1000).toISOString() : null,
-                  engagement_metrics: { score: p.score, comments: p.num_comments, upvote_ratio: p.upvote_ratio },
+                  date: item.createdAt || item.created_utc ? new Date((item.created_utc || 0) * 1000).toISOString() : item.createdAt || null,
+                  engagement_metrics: { score: item.score || item.ups || 0, comments: item.numberOfComments || item.num_comments || 0 },
                 });
               }
             }
-            return localDocs;
+            return docs;
           })
         );
         for (const r of results) {
-          if (r.status === "fulfilled") docs.push(...r.value);
+          if (r.status === "fulfilled") allDocs.push(...r.value);
+        }
+        if (allDocs.length > 0) {
+          const count = await insertDocs(allDocs);
+          console.log(`Reddit: inserted ${count} docs`);
         }
       } catch (e) { console.error("Reddit error:", e); }
-      return docs;
     };
 
-    // Helper for HN — Algolia API supports numericFilters for time range
+    // ── HN via Algolia API ──
     const fetchHN = async (query: string) => {
-      const docs: any[] = [];
       try {
         const dateFilter = `created_at_i>${cutoffTimestamp}`;
         const [storiesRes, commentsRes] = await Promise.all([
           fetch(`https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(query)}&tags=story&numericFilters=${dateFilter}&hitsPerPage=100`),
           fetch(`https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(query)}&tags=comment&numericFilters=${dateFilter}&hitsPerPage=150`),
         ]);
+        const docs: any[] = [];
         if (storiesRes.ok) {
           const data = await storiesRes.json();
           console.log(`HN stories for "${query}": ${(data.hits || []).length}`);
@@ -139,13 +150,15 @@ serve(async (req) => {
             }
           }
         }
+        if (docs.length > 0) {
+          const count = await insertDocs(docs);
+          console.log(`HN: inserted ${count} docs`);
+        }
       } catch (e) { console.error("HN error:", e); }
-      return docs;
     };
 
-    // Helper for X (Twitter) via Apify - xtdata/twitter-x-scraper (1.2K users, 99.9% success, 4.3★)
+    // ── X (Twitter) via Apify ──
     const fetchXQuery = async (query: string) => {
-      const docs: any[] = [];
       try {
         console.log(`X/Twitter: searching "${query}"`);
         const runRes = await fetchWithTimeout(
@@ -153,198 +166,154 @@ serve(async (req) => {
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              searchTerms: [query],
-              maxItems: 100,
-              sort: "Top",
-            }),
+            body: JSON.stringify({ searchTerms: [query], maxItems: 100, sort: "Top" }),
           },
-          40000
+          35000
         );
-        if (runRes.ok) {
-          const items = await runRes.json();
-          console.log(`X/Twitter results for "${query}": ${(items || []).length}`);
-          for (const item of items || []) {
-            const text = item.full_text || item.text || item.tweet_text || item.content || "";
-            if (text.trim().length > 0) {
-              docs.push({
-                question_id: questionId, source: "x",
-                url: item.url || item.tweet_url || item.tweetUrl || null,
-                author: item.user_name || item.username || item.screen_name || item.author || null,
-                text: text.slice(0, 1500),
-                date: item.created_at || item.date || item.timestamp || null,
-                engagement_metrics: {
-                  likes: item.likes || item.favorite_count || item.likeCount || 0,
-                  retweets: item.retweets || item.retweet_count || item.retweetCount || 0,
-                  replies: item.replies || item.reply_count || item.replyCount || 0,
-                  views: item.views || item.viewCount || 0,
-                },
-              });
-            }
+        if (!runRes.ok) {
+          console.error(`X/Twitter failed for "${query}":`, runRes.status, await runRes.text());
+          return;
+        }
+        const items = await runRes.json();
+        console.log(`X/Twitter results for "${query}": ${(items || []).length}`);
+        const docs: any[] = [];
+        for (const item of items || []) {
+          const text = item.full_text || item.text || item.tweet_text || item.content || "";
+          if (text.trim().length > 0) {
+            docs.push({
+              question_id: questionId, source: "x",
+              url: item.url || item.tweet_url || item.tweetUrl || null,
+              author: item.user_name || item.username || item.screen_name || item.author || null,
+              text: text.slice(0, 1500),
+              date: item.created_at || item.date || item.timestamp || null,
+              engagement_metrics: {
+                likes: item.likes || item.favorite_count || item.likeCount || 0,
+                retweets: item.retweets || item.retweet_count || item.retweetCount || 0,
+                replies: item.replies || item.reply_count || item.replyCount || 0,
+                views: item.views || item.viewCount || 0,
+              },
+            });
           }
-        } else {
-          const errText = await runRes.text();
-          console.error(`X/Twitter failed for "${query}":`, runRes.status, errText);
+        }
+        if (docs.length > 0) {
+          const count = await insertDocs(docs);
+          console.log(`X/Twitter: inserted ${count} docs`);
         }
       } catch (e) { console.error(`X/Twitter error for "${query}":`, e); }
-      return docs;
     };
 
-    // Helper for Stack Overflow via Stack Exchange API — uses fromdate for time filtering
+    // ── Stack Overflow via Stack Exchange API ──
     const fetchStackOverflow = async (query: string) => {
-      const docs: any[] = [];
       try {
         console.log(`StackOverflow API searching: ${query}`);
         const soRes = await fetch(
           `https://api.stackexchange.com/2.3/search/advanced?order=desc&sort=relevance&q=${encodeURIComponent(query)}&site=stackoverflow&pagesize=100&filter=withbody&fromdate=${cutoffTimestamp}`
         );
-        if (soRes.ok) {
-          const data = await soRes.json();
-          const items = data.items || [];
-          console.log(`StackOverflow API results: ${items.length} (quota remaining: ${data.quota_remaining})`);
-          for (const item of items) {
-            const body = (item.body || "").replace(/<[^>]+>/g, "");
-            const text = `${item.title}\n${body}`;
+        if (!soRes.ok) {
+          console.error("StackOverflow API failed:", soRes.status);
+          return;
+        }
+        const data = await soRes.json();
+        const items = data.items || [];
+        console.log(`StackOverflow results: ${items.length}`);
+        const docs: any[] = [];
+        for (const item of items) {
+          const body = (item.body || "").replace(/<[^>]+>/g, "");
+          const text = `${item.title}\n${body}`;
+          if (text.trim().length > 0) {
+            docs.push({
+              question_id: questionId, source: "stackoverflow",
+              url: item.link || null,
+              author: item.owner?.display_name || null,
+              text: text.slice(0, 2000),
+              date: item.creation_date ? new Date(item.creation_date * 1000).toISOString() : null,
+              engagement_metrics: { score: item.score, answers: item.answer_count, views: item.view_count },
+            });
+          }
+        }
+        if (docs.length > 0) {
+          const count = await insertDocs(docs);
+          console.log(`StackOverflow: inserted ${count} docs`);
+        }
+      } catch (e) { console.error("StackOverflow error:", e); }
+    };
+
+    // ── Substack via Firecrawl — run both searches in PARALLEL ──
+    const fetchSubstack = async (query: string) => {
+      try {
+        const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY");
+        if (!FIRECRAWL_API_KEY) { console.error("FIRECRAWL_API_KEY not configured"); return; }
+
+        const tbs = timeRangeDays <= 7 ? "qdr:w" : timeRangeDays <= 30 ? "qdr:m" : "qdr:y";
+        const searches = [`site:substack.com ${query}`, `${query} substack`];
+        const seenUrls = new Set<string>();
+        const docs: any[] = [];
+
+        // Run both searches in parallel instead of sequentially
+        const results = await Promise.allSettled(
+          searches.map(async (searchQuery) => {
+            console.log(`Substack (Firecrawl) searching: ${searchQuery}`);
+            const res = await fetchWithTimeout("https://api.firecrawl.dev/v1/search", {
+              method: "POST",
+              headers: { "Authorization": `Bearer ${FIRECRAWL_API_KEY}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ query: searchQuery, limit: 25, tbs, scrapeOptions: { formats: ["markdown"] } }),
+            }, 20000);
+            if (!res.ok) { console.error(`Substack Firecrawl failed:`, res.status); return []; }
+            const data = await res.json();
+            return data?.data || [];
+          })
+        );
+
+        for (const r of results) {
+          if (r.status !== "fulfilled") continue;
+          for (const item of r.value) {
+            const url = item.url || "";
+            if (!url.includes("substack")) continue;
+            if (seenUrls.has(url)) continue;
+            seenUrls.add(url);
+            const text = item.markdown || item.description || "";
             if (text.trim().length > 0) {
               docs.push({
-                question_id: questionId, source: "stackoverflow",
-                url: item.link || null,
-                author: item.owner?.display_name || null,
+                question_id: questionId, source: "substack",
+                url: url || null,
+                author: item.metadata?.author || item.metadata?.ogSiteName || null,
                 text: text.slice(0, 2000),
-                date: item.creation_date ? new Date(item.creation_date * 1000).toISOString() : null,
-                engagement_metrics: { score: item.score, answers: item.answer_count, views: item.view_count },
+                date: item.metadata?.publishedTime || null,
+                engagement_metrics: {},
               });
             }
           }
-        } else {
-          console.error("StackOverflow API failed:", soRes.status, await soRes.text());
         }
-      } catch (e) { console.error("StackOverflow error:", e); }
-      return docs;
-    };
-
-    // Helper for Substack (via Firecrawl search) — Firecrawl tbs param for time filtering
-    const fetchSubstack = async (query: string) => {
-      const docs: any[] = [];
-      try {
-        const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY");
-        if (!FIRECRAWL_API_KEY) {
-          console.error("FIRECRAWL_API_KEY not configured, skipping Substack");
-          return docs;
-        }
-
-        // Map time range to Firecrawl tbs param
-        const tbs = timeRangeDays <= 7 ? "qdr:w" : timeRangeDays <= 30 ? "qdr:m" : "qdr:y";
-
-        const searches = [
-          `site:substack.com ${query}`,
-          `${query} substack`,
-        ];
-
-        const seenUrls = new Set<string>();
-
-        for (const searchQuery of searches) {
-          console.log(`Substack (Firecrawl) searching: ${searchQuery}`);
-          const res = await fetch("https://api.firecrawl.dev/v1/search", {
-            method: "POST",
-            headers: {
-              "Authorization": `Bearer ${FIRECRAWL_API_KEY}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              query: searchQuery,
-              limit: 25,
-              tbs,
-              scrapeOptions: { formats: ["markdown"] },
-            }),
-          });
-          if (res.ok) {
-            const data = await res.json();
-            const results = data?.data || [];
-            console.log(`Substack (Firecrawl) results for "${searchQuery}": ${results.length}`);
-            for (const item of results) {
-              const url = item.url || "";
-              if (!url.includes("substack.com") && !url.includes("substack")) continue;
-              if (seenUrls.has(url)) continue;
-              seenUrls.add(url);
-
-              const text = item.markdown || item.description || "";
-              if (text.trim().length > 0) {
-                docs.push({
-                  question_id: questionId, source: "substack",
-                  url: url || null,
-                  author: item.metadata?.author || item.metadata?.ogSiteName || null,
-                  text: text.slice(0, 2000),
-                  date: item.metadata?.publishedTime || null,
-                  engagement_metrics: {},
-                });
-              }
-            }
-          } else {
-            console.error(`Substack Firecrawl failed:`, res.status, await res.text());
-          }
+        if (docs.length > 0) {
+          const count = await insertDocs(docs);
+          console.log(`Substack: inserted ${count} docs`);
         }
       } catch (e) { console.error("Substack error:", e); }
-      return docs;
     };
 
-    // Run ALL queries across ALL platforms in parallel
-    const tasks: Promise<any[]>[] = [];
+    // ── Run all sources in parallel — each inserts its own docs immediately ──
+    const tasks: Promise<void>[] = [];
 
     if (sources.includes("reddit")) {
-      const queries = getQueries("reddit");
-      console.log("Reddit queries:", queries);
-      tasks.push(withSourceTimeout(fetchReddit(queries), "Reddit"));
+      tasks.push(fetchReddit(getQueries("reddit")));
     }
     if (sources.includes("hackernews")) {
-      const queries = getQueries("hackernews");
-      console.log("HN queries:", queries);
-      for (const q of queries) tasks.push(withSourceTimeout(fetchHN(q), `HN:${q}`));
+      for (const q of getQueries("hackernews")) tasks.push(fetchHN(q));
     }
     if (sources.includes("substack")) {
-      const queries = getQueries("substack");
-      console.log("Substack queries:", queries);
-      for (const q of queries) tasks.push(withSourceTimeout(fetchSubstack(q), `Substack:${q}`));
+      for (const q of getQueries("substack")) tasks.push(fetchSubstack(q));
     }
     if (sources.includes("x")) {
-      const queries = getQueries("x");
-      console.log("X/Twitter queries:", queries);
-      for (const q of queries) tasks.push(withSourceTimeout(fetchXQuery(q), `X:${q}`));
+      for (const q of getQueries("x")) tasks.push(fetchXQuery(q));
     }
     if (sources.includes("stackoverflow")) {
-      const queries = getQueries("stackoverflow");
-      console.log("StackOverflow queries:", queries);
-      for (const q of queries) tasks.push(withSourceTimeout(fetchStackOverflow(q), `SO:${q}`, 20000));
+      for (const q of getQueries("stackoverflow")) tasks.push(fetchStackOverflow(q));
     }
 
-    const settled = await Promise.allSettled(tasks);
-    for (const result of settled) {
-      if (result.status === "fulfilled") allDocuments.push(...result.value);
-      else console.error("Source task rejected:", result.reason);
-    }
+    await Promise.allSettled(tasks);
 
-    // Filter documents: must have text AND be within the requested time range
-    // Documents without a date are only kept from sources where dates are unreliable (substack)
-    if (allDocuments.length > 0) {
-      const filtered = allDocuments.filter((d) => {
-        if (!d.text || d.text.trim().length === 0) return false;
-        if (d.date) {
-          const docDate = new Date(d.date);
-          if (!isNaN(docDate.getTime()) && docDate < cutoffDate) return false;
-        } else {
-          // No date available — only keep for sources where date extraction is unreliable
-          if (d.source !== "substack") return false;
-        }
-        return true;
-      });
-      console.log(`Documents after time filter: ${filtered.length} (from ${allDocuments.length} total, cutoff: ${cutoffDate.toISOString()})`);
-      if (filtered.length > 0) {
-        const { error } = await supabase.from("documents").insert(filtered);
-        if (error) console.error("Insert documents error:", error);
-      }
-    }
-
-    return new Response(JSON.stringify({ success: true, count: allDocuments.length }), {
+    console.log(`Collection complete: ${totalInserted} documents inserted total`);
+    return new Response(JSON.stringify({ success: true, count: totalInserted }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {
