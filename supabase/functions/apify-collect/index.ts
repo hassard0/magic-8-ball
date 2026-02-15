@@ -111,6 +111,99 @@ serve(async (req) => {
       return docs;
     };
 
+    // Helper for X (Twitter) via Apify
+    const fetchX = async (queries: string[]) => {
+      const docs: any[] = [];
+      try {
+        console.log("X/Twitter: searching with queries:", queries);
+        const runRes = await fetch("https://api.apify.com/v2/acts/quacker~twitter-scraper/run-sync-get-dataset-items?token=" + APIFY_API_KEY, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            searchTerms: queries,
+            maxTweets: 50,
+            sort: "Top",
+          }),
+        });
+        if (runRes.ok) {
+          const items = await runRes.json();
+          console.log(`X/Twitter results: ${(items || []).length}`);
+          for (const item of items || []) {
+            const text = item.full_text || item.text || "";
+            if (text.trim().length > 0) {
+              docs.push({
+                question_id: questionId, source: "x",
+                url: item.url || (item.id_str ? `https://x.com/i/status/${item.id_str}` : null),
+                author: item.user?.screen_name || item.author?.userName || null,
+                text,
+                date: item.created_at || item.createdAt || null,
+                engagement_metrics: {
+                  likes: item.favorite_count || item.likeCount || 0,
+                  retweets: item.retweet_count || item.retweetCount || 0,
+                  replies: item.reply_count || item.replyCount || 0,
+                },
+              });
+            }
+          }
+        } else {
+          const errText = await runRes.text();
+          console.error("X/Twitter failed:", runRes.status, errText);
+        }
+      } catch (e) { console.error("X/Twitter error:", e); }
+      return docs;
+    };
+
+    // Helper for Stack Overflow via their public API
+    const fetchStackOverflow = async (query: string) => {
+      const docs: any[] = [];
+      try {
+        const fromDate = Math.floor(cutoffDate.getTime() / 1000);
+        const url = `https://api.stackexchange.com/2.3/search/advanced?order=desc&sort=relevance&q=${encodeURIComponent(query)}&fromdate=${fromDate}&site=stackoverflow&pagesize=30&filter=withbody`;
+        console.log(`StackOverflow searching: ${query}`);
+        const res = await fetch(url);
+        if (res.ok) {
+          const data = await res.json();
+          console.log(`StackOverflow results: ${(data.items || []).length}`);
+          for (const item of data.items || []) {
+            const text = (item.title || "") + "\n" + (item.body || "").replace(/<[^>]+>/g, "").slice(0, 1500);
+            docs.push({
+              question_id: questionId, source: "stackoverflow",
+              url: item.link || null,
+              author: item.owner?.display_name || null,
+              text,
+              date: item.creation_date ? new Date(item.creation_date * 1000).toISOString() : null,
+              engagement_metrics: { score: item.score, answers: item.answer_count, views: item.view_count },
+            });
+          }
+          // Also fetch top answers for the top 5 questions
+          const topIds = (data.items || []).slice(0, 5).map((i: any) => i.question_id).join(";");
+          if (topIds) {
+            const ansUrl = `https://api.stackexchange.com/2.3/questions/${topIds}/answers?order=desc&sort=votes&site=stackoverflow&pagesize=20&filter=withbody`;
+            const ansRes = await fetch(ansUrl);
+            if (ansRes.ok) {
+              const ansData = await ansRes.json();
+              for (const ans of ansData.items || []) {
+                const ansText = (ans.body || "").replace(/<[^>]+>/g, "").slice(0, 1500);
+                if (ansText.trim().length > 0) {
+                  docs.push({
+                    question_id: questionId, source: "stackoverflow",
+                    url: `https://stackoverflow.com/a/${ans.answer_id}`,
+                    author: ans.owner?.display_name || null,
+                    text: ansText,
+                    date: ans.creation_date ? new Date(ans.creation_date * 1000).toISOString() : null,
+                    engagement_metrics: { score: ans.score, is_accepted: ans.is_accepted },
+                  });
+                }
+              }
+            }
+          }
+        } else {
+          console.error("StackOverflow failed:", res.status, await res.text());
+        }
+      } catch (e) { console.error("StackOverflow error:", e); }
+      return docs;
+    };
+
     // Helper for Substack (via Firecrawl search)
     // Run two searches: one scoped to substack.com, one broader with "substack" keyword
     const fetchSubstack = async (query: string) => {
@@ -148,7 +241,6 @@ serve(async (req) => {
             const results = data?.data || [];
             console.log(`Substack (Firecrawl) results for "${searchQuery}": ${results.length}`);
             for (const item of results) {
-              // Only keep results that are actually from Substack domains
               const url = item.url || "";
               if (!url.includes("substack.com") && !url.includes("substack")) continue;
               if (seenUrls.has(url)) continue;
@@ -191,6 +283,16 @@ serve(async (req) => {
       const queries = getQueries("substack");
       console.log("Substack queries:", queries);
       for (const q of queries) tasks.push(fetchSubstack(q));
+    }
+    if (sources.includes("x")) {
+      const queries = getQueries("x");
+      console.log("X/Twitter queries:", queries);
+      tasks.push(fetchX(queries)); // pass all queries at once like Reddit
+    }
+    if (sources.includes("stackoverflow")) {
+      const queries = getQueries("stackoverflow");
+      console.log("StackOverflow queries:", queries);
+      for (const q of queries) tasks.push(fetchStackOverflow(q));
     }
 
     const results = await Promise.all(tasks);
