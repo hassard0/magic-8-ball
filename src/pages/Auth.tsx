@@ -21,17 +21,29 @@ export default function Auth() {
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  // If user is already logged in and has an invite token, accept it immediately
+  // Listen for auth state changes to handle invite acceptance after email verification
   useEffect(() => {
     if (!inviteToken) return;
 
-    const checkExistingSession = async () => {
+    // Check existing session first
+    const checkExisting = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
         await acceptInvite(inviteToken);
       }
     };
-    checkExistingSession();
+    checkExisting();
+
+    // Also listen for auth state changes (handles post-email-verification redirect)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        if (session && inviteToken && !acceptingInvite) {
+          await acceptInvite(inviteToken);
+        }
+      }
+    );
+
+    return () => subscription.unsubscribe();
   }, [inviteToken]);
 
   const acceptInvite = async (token: string) => {
