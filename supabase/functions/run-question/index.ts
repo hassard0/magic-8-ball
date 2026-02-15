@@ -180,7 +180,8 @@ serve(async (req) => {
       }
     }
 
-    // Step 3: Analyze sentiment (pass comparison metadata)
+    // Step 3: Analyze sentiment — fire-and-forget so we don't hit the 60s limit
+    // analyze-sentiment will mark the question as complete/failed itself
     await supabase.from("questions").update({ progress_step: "Analyzing sentiment..." }).eq("id", questionId);
     const analyzeBody: any = { questionId };
     if (classification.type === "comparative") {
@@ -190,22 +191,16 @@ serve(async (req) => {
       };
     }
 
-    const analyzeResponse = await fetchWithTimeout(`${supabaseUrl}/functions/v1/analyze-sentiment`, {
+    // Fire-and-forget: don't await the response
+    fetchWithTimeout(`${supabaseUrl}/functions/v1/analyze-sentiment`, {
       method: "POST",
       headers,
       body: JSON.stringify(analyzeBody),
-    }, 55000);
+    }, 55000).catch((err) => {
+      console.error("Analyze sentiment fire-and-forget error:", err);
+    });
 
-    if (!analyzeResponse.ok) {
-      const err = await analyzeResponse.text();
-      console.error("Analyze sentiment error:", err);
-      throw new Error("Sentiment analysis failed");
-    }
-
-    // Mark as complete
-    await supabase.from("questions").update({ status: "complete", progress_step: null }).eq("id", questionId);
-
-    return new Response(JSON.stringify({ success: true }), {
+    return new Response(JSON.stringify({ success: true, message: "Analysis handed off" }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {

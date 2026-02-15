@@ -9,8 +9,11 @@ const corsHeaders = {
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
+  let questionId: string | undefined;
   try {
-    const { questionId, comparison } = await req.json();
+    const body = await req.json();
+    questionId = body.questionId;
+    const comparison = body.comparison;
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
 
@@ -42,6 +45,7 @@ serve(async (req) => {
         source_breakdown: {},
       }, { onConflict: "question_id" });
 
+      await supabase.from("questions").update({ status: "complete", progress_step: null }).eq("id", questionId);
       return new Response(JSON.stringify({ success: true }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -53,14 +57,23 @@ serve(async (req) => {
 
     // Choose the right analysis mode
     if (comparison) {
-      // === COMPARATIVE ANALYSIS ===
-      return await runComparativeAnalysis(supabase, questionId, question, documents, docSummaries, comparison, LOVABLE_API_KEY);
+      const result = await runComparativeAnalysis(supabase, questionId!, question, documents, docSummaries, comparison, LOVABLE_API_KEY);
+      await supabase.from("questions").update({ status: "complete", progress_step: null }).eq("id", questionId);
+      return result;
     } else {
-      // === STANDARD ANALYSIS ===
-      return await runStandardAnalysis(supabase, questionId, question, documents, docSummaries, LOVABLE_API_KEY);
+      const result = await runStandardAnalysis(supabase, questionId!, question, documents, docSummaries, LOVABLE_API_KEY);
+      await supabase.from("questions").update({ status: "complete", progress_step: null }).eq("id", questionId);
+      return result;
     }
   } catch (error) {
     console.error("analyze-sentiment error:", error);
+    // Mark the question as failed since we own the final status now
+    try {
+      const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+      await supabase.from("questions").update({ status: "failed", progress_step: null }).eq("id", questionId);
+    } catch (e) {
+      console.error("Failed to mark question as failed:", e);
+    }
     return new Response(
       JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
