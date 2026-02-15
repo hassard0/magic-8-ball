@@ -313,13 +313,16 @@ serve(async (req) => {
     }
 
     // Filter documents: must have text AND be within the requested time range
+    // Documents without a date are only kept from sources where dates are unreliable (substack)
     if (allDocuments.length > 0) {
       const filtered = allDocuments.filter((d) => {
         if (!d.text || d.text.trim().length === 0) return false;
-        // If document has a date, enforce the time range cutoff
         if (d.date) {
           const docDate = new Date(d.date);
           if (!isNaN(docDate.getTime()) && docDate < cutoffDate) return false;
+        } else {
+          // No date available — only keep for sources where date extraction is unreliable
+          if (d.source !== "substack") return false;
         }
         return true;
       });

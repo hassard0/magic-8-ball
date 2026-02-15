@@ -58,8 +58,8 @@ serve(async (req) => {
     const batchResults = await Promise.allSettled(
       batches.map(async (batch, batchIdx) => {
         const docList = batch.map((d, idx) => {
-          // Show more text for long-form sources like Substack so relevance isn't misjudged
-          const previewLen = d.source === "substack" ? 600 : 250;
+          // Show enough text context to properly judge relevance
+          const previewLen = d.source === "substack" ? 600 : 400;
           return `[${idx + 1}] (uuid: ${d.id}) Source: ${d.source} | Author: ${d.author || "unknown"}\n${d.text.slice(0, previewLen)}`;
         }).join("\n\n");
 
@@ -77,16 +77,18 @@ serve(async (req) => {
                 content: `You are a relevance filter. The user asked: "${question.question_text}"
 
 For each document below, determine if it is RELEVANT to this question.
-A document is relevant if it:
-- Discusses the company, product, or topic mentioned in the question
-- Contains opinions, experiences, or information related to the question's subject
-- Mentions the topic even briefly in a meaningful way (e.g. comparing it to alternatives, discussing its features)
 
-A document is NOT relevant ONLY if it:
-- Has absolutely nothing to do with the topic (completely unrelated subject matter)
-- Only contains the keyword by coincidence in a totally different context
+A document IS relevant if it:
+- Directly discusses the specific product, company, or topic in the question
+- Contains user opinions, reviews, or experiences about the topic
+- Compares the topic to alternatives or competitors
 
-Be LENIENT — when in doubt, keep the document. It's better to keep a marginally relevant doc than to remove a useful one.
+A document is NOT relevant if it:
+- Only shares a keyword but discusses a completely different subject
+- Is generic content (e.g. a tutorial, documentation, or boilerplate) that doesn't contain opinions or sentiment about the topic
+- Mentions the topic name in passing within unrelated discussion
+
+Apply moderate strictness — remove clearly off-topic documents but keep anything with genuine discussion of the topic.
 
 Return the UUIDs (the "uuid" field) of documents that are NOT relevant. Return ONLY valid UUIDs, not index numbers.`,
               },
