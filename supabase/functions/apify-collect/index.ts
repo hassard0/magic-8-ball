@@ -272,69 +272,99 @@ serve(async (req) => {
       } catch (e) { console.error("StackOverflow error:", e); }
     };
 
-    // ── Substack via Apify (google-search to find substack content) ──
+    // ── Substack via public search API (returns posts with real dates) ──
     const fetchSubstack = async (query: string) => {
       try {
-        // Use Apify's Google Search Results scraper to find Substack posts
-        const searches = [`site:substack.com ${query}`, `"${query}" substack newsletter`];
-        const seenUrls = new Set<string>();
+        console.log(`Substack (API search): searching "${query}"`);
         const docs: any[] = [];
+        const seenUrls = new Set<string>();
 
-        const results = await Promise.allSettled(
-          searches.map(async (searchQuery) => {
-            console.log(`Substack (Apify Google Search): searching "${searchQuery}"`);
-            const res = await fetchWithTimeout(
-              "https://api.apify.com/v2/acts/apify~google-search-scraper/run-sync-get-dataset-items?token=" + APIFY_API_KEY,
-              {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  queries: searchQuery,
-                  maxPagesPerQuery: 3,
-                  resultsPerPage: 25,
-                  languageCode: "en",
-                }),
-              },
-              35000
-            );
-            if (!res.ok) {
-              console.error(`Substack Apify Google Search failed:`, res.status, await res.text());
-              return [];
-            }
-            const data = await res.json();
-            // Google search scraper returns organic results nested
-            const allResults: any[] = [];
-            for (const page of data || []) {
-              if (page.organicResults) allResults.push(...page.organicResults);
-            }
-            return allResults;
-          })
-        );
+        // Substack has a public search API that returns posts with dates
+        const searchUrl = `https://substack.com/api/v1/post/search?query=${encodeURIComponent(query)}&page=0&limit=50`;
+        const res = await fetchWithTimeout(searchUrl, {
+          method: "GET",
+          headers: { "Accept": "application/json" },
+        }, 15000);
 
-        for (const r of results) {
-          if (r.status !== "fulfilled") continue;
-          for (const item of r.value) {
-            const url = item.url || item.link || "";
-            if (seenUrls.has(url)) continue;
+        if (res.ok) {
+          const data = await res.json();
+          const posts = data?.results || data?.posts || data || [];
+          const postList = Array.isArray(posts) ? posts : [];
+          console.log(`Substack search results for "${query}": ${postList.length}`);
+
+          for (const post of postList) {
+            const url = post.canonical_url || post.url || "";
+            if (!url || seenUrls.has(url)) continue;
             seenUrls.add(url);
-            const text = (item.title || "") + (item.description || item.snippet ? "\n" + (item.description || item.snippet) : "");
+            const title = post.title || "";
+            const subtitle = post.subtitle || post.description || "";
+            const body = (post.body || post.truncated_body_text || post.preview || "").replace(/<[^>]+>/g, "").slice(0, 1500);
+            const text = title + (subtitle ? "\n" + subtitle : "") + (body ? "\n" + body : "");
             if (text.trim().length > 0) {
-              // Google Search results rarely have dates; use today as proxy since search results are recent
-              const docDate = item.date || new Date().toISOString();
               docs.push({
                 question_id: questionId, source: "substack",
-                url: url || null,
-                author: item.displayedUrl || null,
+                url,
+                author: post.publishedBylines?.[0]?.name || post.author?.name || post.author_name || null,
                 text: text.slice(0, 2000),
-                date: docDate,
-                engagement_metrics: {},
+                date: post.post_date || post.publishedAt || post.published_at || null,
+                engagement_metrics: {
+                  reactions: post.reaction_count || post.reactionCount || 0,
+                  comments: post.comment_count || post.commentCount || 0,
+                },
               });
             }
           }
+        } else {
+          console.error(`Substack search API failed:`, res.status, await res.text());
         }
+
+        // Fallback: also try the Apify substack scraper for top newsletters related to the query
+        // Use automation-lab/substack-scraper if we found newsletter URLs
+        if (docs.length === 0) {
+          console.log(`Substack: search API returned 0 results, trying Google fallback`);
+          // Quick Google search to find substack URLs
+          const gRes = await fetchWithTimeout(
+            "https://api.apify.com/v2/acts/apify~google-search-scraper/run-sync-get-dataset-items?token=" + APIFY_API_KEY,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                queries: `site:substack.com ${query}`,
+                maxPagesPerQuery: 2,
+                resultsPerPage: 10,
+                languageCode: "en",
+              }),
+            },
+            30000
+          );
+          if (gRes.ok) {
+            const gData = await gRes.json();
+            for (const page of gData || []) {
+              for (const item of page.organicResults || []) {
+                const url = item.url || item.link || "";
+                if (!url || seenUrls.has(url)) continue;
+                seenUrls.add(url);
+                const text = (item.title || "") + (item.description || item.snippet ? "\n" + (item.description || item.snippet) : "");
+                if (text.trim().length > 0) {
+                  docs.push({
+                    question_id: questionId, source: "substack",
+                    url,
+                    author: null,
+                    text: text.slice(0, 2000),
+                    date: item.date || new Date().toISOString(),
+                    engagement_metrics: {},
+                  });
+                }
+              }
+            }
+          }
+        }
+
         if (docs.length > 0) {
           const count = await insertDocs(docs);
           console.log(`Substack: inserted ${count} docs`);
+        } else {
+          console.log(`Substack: no results found for "${query}"`);
         }
       } catch (e) { console.error("Substack error:", e); }
     };
