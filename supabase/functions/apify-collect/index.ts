@@ -131,44 +131,51 @@ serve(async (req) => {
       return docs;
     };
 
-    // Helper for X (Twitter) via Apify - runs each query in PARALLEL to avoid sequential timeout
+    // Helper for X (Twitter) via Firecrawl site:x.com search (fast, reliable)
     const fetchXQuery = async (query: string) => {
       const docs: any[] = [];
       try {
-        console.log(`X/Twitter: searching "${query}"`);
-        const runRes = await fetchWithTimeout("https://api.apify.com/v2/acts/viralanalyzer~twitter-scraper/run-sync-get-dataset-items?token=" + APIFY_API_KEY, {
+        const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY");
+        if (!FIRECRAWL_API_KEY) {
+          console.error("FIRECRAWL_API_KEY not configured, skipping X/Twitter");
+          return docs;
+        }
+        console.log(`X/Twitter (Firecrawl): searching "${query}"`);
+        const res = await fetchWithTimeout("https://api.firecrawl.dev/v1/search", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Authorization": `Bearer ${FIRECRAWL_API_KEY}`,
+            "Content-Type": "application/json",
+          },
           body: JSON.stringify({
-            searchQuery: query,
-            maxTweets: 20,
-            tweetType: "top",
+            query: `site:x.com ${query}`,
+            limit: 20,
+            scrapeOptions: { formats: ["markdown"] },
           }),
-        });
-        if (runRes.ok) {
-          const items = await runRes.json();
-          console.log(`X/Twitter results for "${query}": ${(items || []).length}`);
-          for (const item of items || []) {
-            const text = item.full_text || item.text || item.tweet_text || "";
+        }, 20000);
+        if (res.ok) {
+          const data = await res.json();
+          const results = data?.data || [];
+          console.log(`X/Twitter (Firecrawl) results for "${query}": ${results.length}`);
+          for (const item of results) {
+            const url = item.url || "";
+            if (!url.includes("x.com") && !url.includes("twitter.com")) continue;
+            const text = item.markdown || item.description || "";
             if (text.trim().length > 0) {
+              // Try to extract author from x.com URL pattern: x.com/username/status/...
+              const authorMatch = url.match(/x\.com\/([^/]+)\//);
               docs.push({
                 question_id: questionId, source: "x",
-                url: item.tweet_url || item.url || null,
-                author: item.username || item.screen_name || item.user?.screen_name || null,
+                url: url || null,
+                author: authorMatch?.[1] || null,
                 text: text.slice(0, 1500),
-                date: item.created_at || item.date || null,
-                engagement_metrics: {
-                  likes: item.likes || item.favorite_count || 0,
-                  retweets: item.retweets || item.retweet_count || 0,
-                  replies: item.replies || item.reply_count || 0,
-                  views: item.views || 0,
-                },
+                date: item.metadata?.publishedTime || null,
+                engagement_metrics: {},
               });
             }
           }
         } else {
-          const errText = await runRes.text();
-          console.error(`X/Twitter Apify failed for "${query}":`, runRes.status, errText);
+          console.error(`X/Twitter Firecrawl failed for "${query}":`, res.status, await res.text());
         }
       } catch (e) { console.error(`X/Twitter error for "${query}":`, e); }
       return docs;
