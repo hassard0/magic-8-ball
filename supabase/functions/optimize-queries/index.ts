@@ -15,21 +15,21 @@ serve(async (req) => {
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
 
-    const systemPrompt = `You are a search keyword extractor. Given a user's question, extract 1-3 core search keywords or short phrases that identify the specific company, product, or topic being discussed.
+    const systemPrompt = `You are a question classifier and search keyword extractor for a community sentiment analysis tool.
+
+Given a user's question, first CLASSIFY it into one of these types:
+1. "standard" — Asks about sentiment/opinions on a specific company, product, or technology topic. Example: "How do people feel about Auth0 pricing?"
+2. "comparative" — Compares two specific entities. Example: "Is WorkOS better than Auth0?" or "Stripe vs Square"
+3. "abstract" — A broad or metaphorical question that CAN be reframed into a searchable topic about technology/community sentiment. Example: "Is software dead?" → can be reframed to search for "software engineering future AI"
+4. "unanswerable" — Completely off-topic, personal, or nonsensical for community sentiment analysis. Example: "There is a meaning in life?", "Did I just overwhelm this cluster?", "What's 2+2?"
 
 RULES:
-- Extract the SPECIFIC entity name (e.g. "Auth0", "Stripe", "Vercel")
-- Add 1-2 additional terms only if they narrow the topic meaningfully (e.g. "pricing", "reliability")
+- For "standard": Extract 1-3 core search keywords (entity name + narrowing terms)
+- For "comparative": Extract the two entities being compared, plus 1-2 keywords per entity
+- For "abstract": Reframe into 1-3 searchable keyword phrases that would find relevant community discussions
+- For "unanswerable": No keywords needed
 - Keep each keyword/phrase to 1-3 words maximum
-- These keywords will be used as simple search terms across Reddit, HN, and Substack
-- DO NOT generate full questions or complex queries
-- DO NOT add generic terms like "review", "opinion", "alternative"
-
-Examples:
-- "How do people feel about Auth0 pricing?" → ["Auth0", "Auth0 pricing"]
-- "What's the sentiment around Vercel?" → ["Vercel"]
-- "Is Stripe Connect worth using for marketplaces?" → ["Stripe Connect", "Stripe Connect marketplace"]
-- "How reliable is Supabase for production?" → ["Supabase", "Supabase production"]`;
+- DO NOT add generic terms like "review", "opinion", "alternative"`;
 
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
@@ -47,33 +47,60 @@ Examples:
           {
             type: "function",
             function: {
-              name: "return_keywords",
-              description: "Return 1-3 core search keywords extracted from the question",
+              name: "classify_and_extract",
+              description: "Classify the question type and extract search keywords",
               parameters: {
                 type: "object",
                 properties: {
+                  type: {
+                    type: "string",
+                    enum: ["standard", "comparative", "abstract", "unanswerable"],
+                    description: "The classification type of the question",
+                  },
                   keywords: {
                     type: "array",
                     items: { type: "string" },
-                    description: "1-3 core search keywords or short phrases",
+                    description: "1-3 core search keywords for standard/abstract questions",
+                  },
+                  entity_a: {
+                    type: "string",
+                    description: "First entity name for comparative questions",
+                  },
+                  entity_b: {
+                    type: "string",
+                    description: "Second entity name for comparative questions",
+                  },
+                  entity_a_keywords: {
+                    type: "array",
+                    items: { type: "string" },
+                    description: "1-2 search keywords for entity A in comparative questions",
+                  },
+                  entity_b_keywords: {
+                    type: "array",
+                    items: { type: "string" },
+                    description: "1-2 search keywords for entity B in comparative questions",
+                  },
+                  rejection_reason: {
+                    type: "string",
+                    description: "Brief friendly reason why the question can't be answered (for unanswerable type)",
                   },
                 },
-                required: ["keywords"],
+                required: ["type"],
                 additionalProperties: false,
               },
             },
           },
         ],
-        tool_choice: { type: "function", function: { name: "return_keywords" } },
+        tool_choice: { type: "function", function: { name: "classify_and_extract" } },
       }),
     });
 
     if (!response.ok) {
       console.error("AI gateway error:", response.status, await response.text());
-      // Fallback: use original question as keyword
+      // Fallback: treat as standard with original question
       const queries: Record<string, string[]> = {};
       for (const s of sources) queries[s] = [questionText];
-      return new Response(JSON.stringify({ queries }), {
+      return new Response(JSON.stringify({ type: "standard", queries }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -85,19 +112,50 @@ Examples:
       console.error("No tool call in response, falling back");
       const queries: Record<string, string[]> = {};
       for (const s of sources) queries[s] = [questionText];
-      return new Response(JSON.stringify({ queries }), {
+      return new Response(JSON.stringify({ type: "standard", queries }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const { keywords } = JSON.parse(toolCall.function.arguments);
-    console.log("Extracted keywords:", JSON.stringify(keywords));
+    const result = JSON.parse(toolCall.function.arguments);
+    console.log("Classification result:", JSON.stringify(result));
 
-    // Use the same keywords for all platforms
+    if (result.type === "unanswerable") {
+      return new Response(JSON.stringify({
+        type: "unanswerable",
+        rejection_reason: result.rejection_reason || "This question isn't suited for community sentiment analysis. Try asking about a specific company, product, or technology topic.",
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    if (result.type === "comparative") {
+      // Build separate query sets for each entity
+      const queriesA: Record<string, string[]> = {};
+      const queriesB: Record<string, string[]> = {};
+      const kwA = result.entity_a_keywords?.length > 0 ? result.entity_a_keywords : [result.entity_a];
+      const kwB = result.entity_b_keywords?.length > 0 ? result.entity_b_keywords : [result.entity_b];
+      for (const s of sources) {
+        queriesA[s] = kwA;
+        queriesB[s] = kwB;
+      }
+      return new Response(JSON.stringify({
+        type: "comparative",
+        entity_a: result.entity_a,
+        entity_b: result.entity_b,
+        queries_a: queriesA,
+        queries_b: queriesB,
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Standard or abstract — both use keywords
+    const keywords = result.keywords?.length > 0 ? result.keywords : [questionText];
     const queries: Record<string, string[]> = {};
     for (const s of sources) queries[s] = keywords;
 
-    return new Response(JSON.stringify({ queries }), {
+    return new Response(JSON.stringify({ type: result.type, queries }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {
