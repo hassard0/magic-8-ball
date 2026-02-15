@@ -77,8 +77,16 @@ serve(async (req) => {
                 content: `You are a relevance filter. The user asked: "${question.question_text}"
 
 For each document below, determine if it is RELEVANT to this question.
-A document is relevant if it directly discusses the specific company/product/topic.
-A document is NOT relevant if it only mentions the topic tangentially or is about something else.
+A document is relevant if it:
+- Discusses the company, product, or topic mentioned in the question
+- Contains opinions, experiences, or information related to the question's subject
+- Mentions the topic even briefly in a meaningful way (e.g. comparing it to alternatives, discussing its features)
+
+A document is NOT relevant ONLY if it:
+- Has absolutely nothing to do with the topic (completely unrelated subject matter)
+- Only contains the keyword by coincidence in a totally different context
+
+Be LENIENT — when in doubt, keep the document. It's better to keep a marginally relevant doc than to remove a useful one.
 
 Return the UUIDs (the "uuid" field) of documents that are NOT relevant. Return ONLY valid UUIDs, not index numbers.`,
               },
