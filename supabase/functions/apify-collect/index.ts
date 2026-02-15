@@ -245,7 +245,7 @@ serve(async (req) => {
           if (text.trim().length > 0) {
             // Try multiple date formats: unix seconds, unix ms, ISO string
             let dateStr: string | null = null;
-            const rawDate = item.creation_date || item.createdAt || item.date || item.last_activity_date || item.created || item.timestamp;
+            const rawDate = item.last_activity_date || item.lastActivityAt || item.creation_date || item.createdAt || item.date || item.created || item.timestamp;
             if (rawDate) {
               if (typeof rawDate === "number") {
                 // If < 1e12 it's seconds, otherwise ms
@@ -283,7 +283,7 @@ serve(async (req) => {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ keywords: [query], maxItems: 50 }),
           },
-          45000
+          55000
         );
         if (!res.ok) {
           console.error(`Substack easyapi failed for "${query}":`, res.status, await res.text());
