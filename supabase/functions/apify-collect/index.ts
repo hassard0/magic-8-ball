@@ -10,7 +10,7 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const { questionId, questionText, sources, timeRange, optimizedQueries } = await req.json();
+    const { questionId, questionText, sources, timeRange, optimizedQueries, entityTag } = await req.json();
     // Use extracted keywords per platform — these are focused 1-3 word terms
     const getQueries = (platform: string): string[] => {
       if (optimizedQueries && optimizedQueries[platform] && optimizedQueries[platform].length > 0) {

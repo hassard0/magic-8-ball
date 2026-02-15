@@ -20,7 +20,6 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = 5500
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
-  // Parse body early so we can reference questionId in the error handler
   let questionId: string | null = null;
 
   try {
@@ -38,7 +37,7 @@ serve(async (req) => {
     };
 
     // Mark as running
-    await supabase.from("questions").update({ status: "running", progress_step: "Extracting search keywords..." }).eq("id", questionId);
+    await supabase.from("questions").update({ status: "running", progress_step: "Classifying question..." }).eq("id", questionId);
 
     // Get question details
     const { data: question, error: qErr } = await supabase
@@ -49,8 +48,10 @@ serve(async (req) => {
 
     if (qErr || !question) throw new Error("Question not found");
 
-    // Step 0: Optimize search queries via Gemini
+    // Step 0: Classify and optimize search queries via Gemini
+    let classification: any = { type: "standard" };
     let optimizedQueries: Record<string, string[]> = {};
+
     try {
       const optimizeResponse = await fetchWithTimeout(`${supabaseUrl}/functions/v1/optimize-queries`, {
         method: "POST",
@@ -59,12 +60,42 @@ serve(async (req) => {
           questionText: question.question_text,
           sources: question.sources,
         }),
-      }, 15000); // 15s max for keyword extraction
+      }, 15000);
 
       if (optimizeResponse.ok) {
-        const optimizeData = await optimizeResponse.json();
-        optimizedQueries = optimizeData.queries || {};
-        console.log("Using optimized queries:", JSON.stringify(optimizedQueries));
+        classification = await optimizeResponse.json();
+        console.log("Classification:", JSON.stringify(classification));
+
+        // Handle unanswerable questions — mark complete with a friendly message
+        if (classification.type === "unanswerable") {
+          await supabase.from("analysis_results").upsert({
+            question_id: questionId,
+            overall_score: null,
+            distribution: { positive: 0, neutral: 100, negative: 0 },
+            confidence: 0,
+            themes: [],
+            verdict: "🎱 Can't Answer That",
+            quotes: [],
+            source_breakdown: {},
+            // Store rejection reason in themes for display
+          }, { onConflict: "question_id" });
+
+          // Store a helpful theme explaining why
+          await supabase.from("analysis_results").update({
+            themes: [{ name: "Not Applicable", explanation: classification.rejection_reason || "This question isn't suited for community sentiment analysis. Try asking about a specific company, product, or technology topic." }],
+          }).eq("question_id", questionId);
+
+          await supabase.from("questions").update({ status: "complete", progress_step: null }).eq("id", questionId);
+          return new Response(JSON.stringify({ success: true, type: "unanswerable" }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        if (classification.type === "comparative") {
+          optimizedQueries = classification.queries_a || {};
+        } else {
+          optimizedQueries = classification.queries || {};
+        }
       } else {
         console.error("Optimize queries failed, using original question as fallback");
       }
@@ -72,24 +103,66 @@ serve(async (req) => {
       console.error("Optimize queries error:", e);
     }
 
-    // Step 1: Collect data via Apify (with optimized queries)
-    await supabase.from("questions").update({ progress_step: "Collecting data from sources..." }).eq("id", questionId);
-    const collectResponse = await fetchWithTimeout(`${supabaseUrl}/functions/v1/apify-collect`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        questionId,
-        questionText: question.question_text,
-        sources: question.sources,
-        timeRange: question.time_range,
-        optimizedQueries,
-      }),
-    }, 50000); // 50s for data collection
+    if (classification.type === "comparative") {
+      // === COMPARATIVE FLOW ===
+      // Collect data for both entities, tag documents, then analyze together
+      await supabase.from("questions").update({ progress_step: `Collecting data for ${classification.entity_a}...` }).eq("id", questionId);
 
-    if (!collectResponse.ok) {
-      const err = await collectResponse.text();
-      console.error("Apify collect error:", err);
-      throw new Error("Data collection failed");
+      const collectA = await fetchWithTimeout(`${supabaseUrl}/functions/v1/apify-collect`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          questionId,
+          questionText: classification.entity_a,
+          sources: question.sources,
+          timeRange: question.time_range,
+          optimizedQueries: classification.queries_a || {},
+          entityTag: classification.entity_a,
+        }),
+      }, 50000);
+
+      if (!collectA.ok) {
+        console.error("Collect entity A error:", await collectA.text());
+      }
+
+      await supabase.from("questions").update({ progress_step: `Collecting data for ${classification.entity_b}...` }).eq("id", questionId);
+
+      const collectB = await fetchWithTimeout(`${supabaseUrl}/functions/v1/apify-collect`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          questionId,
+          questionText: classification.entity_b,
+          sources: question.sources,
+          timeRange: question.time_range,
+          optimizedQueries: classification.queries_b || {},
+          entityTag: classification.entity_b,
+        }),
+      }, 50000);
+
+      if (!collectB.ok) {
+        console.error("Collect entity B error:", await collectB.text());
+      }
+    } else {
+      // === STANDARD / ABSTRACT FLOW ===
+      await supabase.from("questions").update({ progress_step: "Collecting data from sources..." }).eq("id", questionId);
+      const collectResponse = await fetchWithTimeout(`${supabaseUrl}/functions/v1/apify-collect`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          questionId,
+          questionText: question.question_text,
+          sources: question.sources,
+          timeRange: question.time_range,
+          optimizedQueries,
+        }),
+      }, 50000);
+
+      if (!collectResponse.ok) {
+        const err = await collectResponse.text();
+        console.error("Apify collect error:", err);
+        throw new Error("Data collection failed");
+      }
     }
 
     // Step 2: Filter irrelevant documents
@@ -109,15 +182,22 @@ serve(async (req) => {
       }
     } catch (e) {
       console.error("Filter relevance error (non-fatal):", e);
-      // Non-fatal: continue with unfiltered docs
     }
 
-    // Step 3: Analyze sentiment
+    // Step 3: Analyze sentiment (pass comparison metadata)
     await supabase.from("questions").update({ progress_step: "Analyzing sentiment..." }).eq("id", questionId);
+    const analyzeBody: any = { questionId };
+    if (classification.type === "comparative") {
+      analyzeBody.comparison = {
+        entity_a: classification.entity_a,
+        entity_b: classification.entity_b,
+      };
+    }
+
     const analyzeResponse = await fetchWithTimeout(`${supabaseUrl}/functions/v1/analyze-sentiment`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ questionId }),
+      body: JSON.stringify(analyzeBody),
     }, 55000);
 
     if (!analyzeResponse.ok) {
@@ -135,7 +215,6 @@ serve(async (req) => {
   } catch (error) {
     console.error("run-question error:", error);
 
-    // Mark as failed using the questionId we parsed at the top
     if (questionId) {
       try {
         const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);

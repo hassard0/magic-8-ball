@@ -10,7 +10,7 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const { questionId } = await req.json();
+    const { questionId, comparison } = await req.json();
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
 
@@ -19,7 +19,6 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // Get question and documents
     const { data: question } = await supabase
       .from("questions")
       .select("*")
@@ -32,7 +31,6 @@ serve(async (req) => {
       .eq("question_id", questionId);
 
     if (!question || !documents || documents.length === 0) {
-      // No documents collected — create a neutral result
       await supabase.from("analysis_results").upsert({
         question_id: questionId,
         overall_score: 0,
@@ -49,12 +47,29 @@ serve(async (req) => {
       });
     }
 
-    // Prepare document summaries for the AI (limit to first 100 to stay within token limits)
     const docSummaries = documents.slice(0, 100).map((d, i) =>
-      `[${i + 1}] Source: ${d.source} | Author: ${d.author || "unknown"} | Date: ${d.date || "unknown"} | URL: ${d.url || "none"}\n${d.text.slice(0, 500)}`
+      `[${i + 1}] Source: ${d.source} | Author: ${d.author || "unknown"} | Date: ${d.date || "unknown"} | URL: ${d.url || "none"} | Entity: ${(d as any).entity_tag || "general"}\n${d.text.slice(0, 500)}`
     ).join("\n\n");
 
-    const systemPrompt = `You are a sentiment analysis expert. Analyze the following community discussions about the question: "${question.question_text}"
+    // Choose the right analysis mode
+    if (comparison) {
+      // === COMPARATIVE ANALYSIS ===
+      return await runComparativeAnalysis(supabase, questionId, question, documents, docSummaries, comparison, LOVABLE_API_KEY);
+    } else {
+      // === STANDARD ANALYSIS ===
+      return await runStandardAnalysis(supabase, questionId, question, documents, docSummaries, LOVABLE_API_KEY);
+    }
+  } catch (error) {
+    console.error("analyze-sentiment error:", error);
+    return new Response(
+      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+});
+
+async function runStandardAnalysis(supabase: any, questionId: string, question: any, documents: any[], docSummaries: string, LOVABLE_API_KEY: string) {
+  const systemPrompt = `You are a sentiment analysis expert. Analyze the following community discussions about the question: "${question.question_text}"
 
 USER INTENT: The user wants to understand public sentiment specifically about the topic in their question. When selecting quotes, ONLY include quotes that DIRECTLY discuss the specific company, product, or topic mentioned in the question. Discard any document or quote that merely mentions a keyword tangentially or discusses an unrelated subject.
 
@@ -69,132 +84,266 @@ CRITICAL RULES FOR QUOTES:
 
 You MUST call the "analyze_sentiment" function with your analysis results. Do not respond with plain text.`;
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: `Here are ${documents.length} community posts/comments to analyze:\n\n${docSummaries}` },
-        ],
-        tools: [
-          {
-            type: "function",
-            function: {
-              name: "analyze_sentiment",
-              description: "Return structured sentiment analysis results",
-              parameters: {
-                type: "object",
-                properties: {
-                  overall_score: {
-                    type: "integer",
-                    description: "Overall sentiment score from -100 (very negative) to +100 (very positive)",
+  const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${LOVABLE_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "google/gemini-2.5-flash",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: `Here are ${documents.length} community posts/comments to analyze:\n\n${docSummaries}` },
+      ],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "analyze_sentiment",
+            description: "Return structured sentiment analysis results",
+            parameters: {
+              type: "object",
+              properties: {
+                overall_score: { type: "integer", description: "Overall sentiment score from -100 (very negative) to +100 (very positive)" },
+                distribution: {
+                  type: "object",
+                  properties: {
+                    positive: { type: "number" },
+                    neutral: { type: "number" },
+                    negative: { type: "number" },
                   },
-                  distribution: {
+                  required: ["positive", "neutral", "negative"],
+                  additionalProperties: false,
+                },
+                confidence: { type: "number", description: "Confidence score from 0 to 1" },
+                verdict: { type: "string", description: "Short verdict headline" },
+                themes: {
+                  type: "array",
+                  items: {
                     type: "object",
-                    properties: {
-                      positive: { type: "number", description: "Percentage of positive mentions" },
-                      neutral: { type: "number", description: "Percentage of neutral mentions" },
-                      negative: { type: "number", description: "Percentage of negative mentions" },
-                    },
-                    required: ["positive", "neutral", "negative"],
+                    properties: { name: { type: "string" }, explanation: { type: "string" } },
+                    required: ["name", "explanation"],
                     additionalProperties: false,
                   },
-                  confidence: {
-                    type: "number",
-                    description: "Confidence score from 0 to 1 based on volume and agreement",
-                  },
-                  verdict: {
-                    type: "string",
-                    description: "Short verdict headline like 'Mostly Negative', 'Mixed Feelings', 'Overwhelmingly Positive'",
-                  },
-                  themes: {
-                    type: "array",
-                    items: {
-                      type: "object",
-                      properties: {
-                        name: { type: "string" },
-                        explanation: { type: "string" },
-                      },
-                      required: ["name", "explanation"],
-                      additionalProperties: false,
-                    },
-                    description: "Top 3-5 themes found in the discussions",
-                  },
-                  quotes: {
-                    type: "array",
-                    items: {
-                      type: "object",
-                      properties: {
-                        text: { type: "string" },
-                        source: { type: "string" },
-                        url: { type: "string" },
-                        sentiment: { type: "string", enum: ["positive", "neutral", "negative"] },
-                      },
-                      required: ["text", "source", "sentiment"],
-                      additionalProperties: false,
-                    },
-                    description: "9-12 representative quotes. MUST include at least 3 positive, 3 neutral, and 3 negative quotes for balanced coverage. Pick the most insightful quote for each sentiment.",
-                  },
-                  source_breakdown: {
+                },
+                quotes: {
+                  type: "array",
+                  items: {
                     type: "object",
-                    description: "Count of mentions per source platform",
-                    additionalProperties: { type: "integer" },
+                    properties: {
+                      text: { type: "string" },
+                      source: { type: "string" },
+                      url: { type: "string" },
+                      sentiment: { type: "string", enum: ["positive", "neutral", "negative"] },
+                    },
+                    required: ["text", "source", "sentiment"],
+                    additionalProperties: false,
                   },
                 },
-                required: ["overall_score", "distribution", "confidence", "verdict", "themes", "quotes", "source_breakdown"],
-                additionalProperties: false,
+                source_breakdown: { type: "object", additionalProperties: { type: "integer" } },
               },
+              required: ["overall_score", "distribution", "confidence", "verdict", "themes", "quotes", "source_breakdown"],
+              additionalProperties: false,
             },
           },
-        ],
-        tool_choice: { type: "function", function: { name: "analyze_sentiment" } },
-      }),
-    });
+        },
+      ],
+      tool_choice: { type: "function", function: { name: "analyze_sentiment" } },
+    }),
+  });
 
-    if (!response.ok) {
-      if (response.status === 429) {
-        throw new Error("AI rate limit exceeded. Please try again later.");
-      }
-      if (response.status === 402) {
-        throw new Error("AI credits depleted. Please add credits to continue.");
-      }
-      const errText = await response.text();
-      console.error("AI gateway error:", response.status, errText);
-      throw new Error("AI analysis failed");
-    }
-
-    const aiResult = await response.json();
-    const toolCall = aiResult.choices?.[0]?.message?.tool_calls?.[0];
-
-    if (!toolCall) throw new Error("AI did not return structured results");
-
-    const analysisData = JSON.parse(toolCall.function.arguments);
-
-    // Store results
-    await supabase.from("analysis_results").upsert({
-      question_id: questionId,
-      overall_score: analysisData.overall_score,
-      distribution: analysisData.distribution,
-      confidence: analysisData.confidence,
-      verdict: analysisData.verdict,
-      themes: analysisData.themes,
-      quotes: analysisData.quotes,
-      source_breakdown: analysisData.source_breakdown,
-    }, { onConflict: "question_id" });
-
-    return new Response(JSON.stringify({ success: true }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  } catch (error) {
-    console.error("analyze-sentiment error:", error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+  if (!response.ok) {
+    if (response.status === 429) throw new Error("AI rate limit exceeded. Please try again later.");
+    if (response.status === 402) throw new Error("AI credits depleted. Please add credits to continue.");
+    console.error("AI gateway error:", response.status, await response.text());
+    throw new Error("AI analysis failed");
   }
-});
+
+  const aiResult = await response.json();
+  const toolCall = aiResult.choices?.[0]?.message?.tool_calls?.[0];
+  if (!toolCall) throw new Error("AI did not return structured results");
+
+  const analysisData = JSON.parse(toolCall.function.arguments);
+
+  await supabase.from("analysis_results").upsert({
+    question_id: questionId,
+    overall_score: analysisData.overall_score,
+    distribution: analysisData.distribution,
+    confidence: analysisData.confidence,
+    verdict: analysisData.verdict,
+    themes: analysisData.themes,
+    quotes: analysisData.quotes,
+    source_breakdown: analysisData.source_breakdown,
+  }, { onConflict: "question_id" });
+
+  return new Response(JSON.stringify({ success: true }), {
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+async function runComparativeAnalysis(supabase: any, questionId: string, question: any, documents: any[], docSummaries: string, comparison: { entity_a: string; entity_b: string }, LOVABLE_API_KEY: string) {
+  const systemPrompt = `You are a comparative sentiment analysis expert. The user asked: "${question.question_text}"
+
+This is a COMPARISON between "${comparison.entity_a}" and "${comparison.entity_b}".
+
+Analyze the community discussions and produce a side-by-side comparison. Documents may be tagged with an entity. Focus on comparing how the community feels about each entity.
+
+CRITICAL RULES:
+- Analyze sentiment for EACH entity separately
+- Provide a clear comparative verdict (e.g. "Community Prefers ${comparison.entity_a}" or "Mixed — Both Have Trade-offs")
+- Select quotes relevant to EACH entity
+- Each quote's "url" field MUST be copied EXACTLY from the document's URL field
+- Each quote's "entity" field MUST indicate which entity it's about
+
+You MUST call the "compare_sentiment" function.`;
+
+  const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${LOVABLE_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "google/gemini-2.5-flash",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: `Here are ${documents.length} community posts/comments to analyze:\n\n${docSummaries}` },
+      ],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "compare_sentiment",
+            description: "Return structured comparative sentiment analysis",
+            parameters: {
+              type: "object",
+              properties: {
+                verdict: { type: "string", description: "Comparative verdict headline" },
+                confidence: { type: "number", description: "Confidence score 0-1" },
+                entity_a: {
+                  type: "object",
+                  properties: {
+                    name: { type: "string" },
+                    score: { type: "integer", description: "Sentiment score -100 to +100" },
+                    distribution: {
+                      type: "object",
+                      properties: {
+                        positive: { type: "number" },
+                        neutral: { type: "number" },
+                        negative: { type: "number" },
+                      },
+                      required: ["positive", "neutral", "negative"],
+                      additionalProperties: false,
+                    },
+                    strengths: {
+                      type: "array",
+                      items: { type: "string" },
+                      description: "Top 3 strengths mentioned by community",
+                    },
+                    weaknesses: {
+                      type: "array",
+                      items: { type: "string" },
+                      description: "Top 3 weaknesses mentioned by community",
+                    },
+                  },
+                  required: ["name", "score", "distribution", "strengths", "weaknesses"],
+                  additionalProperties: false,
+                },
+                entity_b: {
+                  type: "object",
+                  properties: {
+                    name: { type: "string" },
+                    score: { type: "integer" },
+                    distribution: {
+                      type: "object",
+                      properties: {
+                        positive: { type: "number" },
+                        neutral: { type: "number" },
+                        negative: { type: "number" },
+                      },
+                      required: ["positive", "neutral", "negative"],
+                      additionalProperties: false,
+                    },
+                    strengths: {
+                      type: "array",
+                      items: { type: "string" },
+                    },
+                    weaknesses: {
+                      type: "array",
+                      items: { type: "string" },
+                    },
+                  },
+                  required: ["name", "score", "distribution", "strengths", "weaknesses"],
+                  additionalProperties: false,
+                },
+                themes: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: { name: { type: "string" }, explanation: { type: "string" } },
+                    required: ["name", "explanation"],
+                    additionalProperties: false,
+                  },
+                },
+                quotes: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      text: { type: "string" },
+                      source: { type: "string" },
+                      url: { type: "string" },
+                      sentiment: { type: "string", enum: ["positive", "neutral", "negative"] },
+                      entity: { type: "string", description: "Which entity this quote is about" },
+                    },
+                    required: ["text", "source", "sentiment", "entity"],
+                    additionalProperties: false,
+                  },
+                },
+                source_breakdown: { type: "object", additionalProperties: { type: "integer" } },
+              },
+              required: ["verdict", "confidence", "entity_a", "entity_b", "themes", "quotes", "source_breakdown"],
+              additionalProperties: false,
+            },
+          },
+        },
+      ],
+      tool_choice: { type: "function", function: { name: "compare_sentiment" } },
+    }),
+  });
+
+  if (!response.ok) {
+    if (response.status === 429) throw new Error("AI rate limit exceeded.");
+    if (response.status === 402) throw new Error("AI credits depleted.");
+    console.error("AI gateway error:", response.status, await response.text());
+    throw new Error("AI analysis failed");
+  }
+
+  const aiResult = await response.json();
+  const toolCall = aiResult.choices?.[0]?.message?.tool_calls?.[0];
+  if (!toolCall) throw new Error("AI did not return structured results");
+
+  const compData = JSON.parse(toolCall.function.arguments);
+
+  // Store comparison data in existing schema — use source_breakdown for comparison structure
+  await supabase.from("analysis_results").upsert({
+    question_id: questionId,
+    overall_score: null, // No single score for comparisons
+    distribution: {
+      // Store both distributions
+      entity_a: compData.entity_a,
+      entity_b: compData.entity_b,
+      is_comparison: true,
+    },
+    confidence: compData.confidence,
+    verdict: compData.verdict,
+    themes: compData.themes,
+    quotes: compData.quotes,
+    source_breakdown: compData.source_breakdown,
+  }, { onConflict: "question_id" });
+
+  return new Response(JSON.stringify({ success: true }), {
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
