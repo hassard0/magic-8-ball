@@ -56,24 +56,23 @@ serve(async (req) => {
       return filtered.length;
     };
 
-    // ── Reddit via Apify (JSON API returns 403 from edge functions) ──
+    // ── Reddit via Apify (vulnv/reddit-posts-search-scraper — pay-per-result, no subscription) ──
     const fetchReddit = async (queries: string[]) => {
       try {
         const allDocs: any[] = [];
+        const sortParam = timeRangeDays <= 7 ? "new" : "relevance";
         const results = await Promise.allSettled(
           queries.map(async (query) => {
-            console.log(`Reddit (Apify): searching "${query}"`);
+            console.log(`Reddit (Apify vulnv): searching "${query}" sort=${sortParam} limit=100`);
             const res = await fetchWithTimeout(
-              "https://api.apify.com/v2/acts/trudax~reddit-scraper/run-sync-get-dataset-items?token=" + APIFY_API_KEY,
+              "https://api.apify.com/v2/acts/vulnv~reddit-posts-search-scraper/run-sync-get-dataset-items?token=" + APIFY_API_KEY,
               {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                  searches: [query],
-                  maxPostCount: 100,
-                  sort: "relevance",
-                  time: timeRangeDays <= 7 ? "week" : timeRangeDays <= 30 ? "month" : "year",
-                  proxy: { useApifyProxy: true },
+                  keyword: query,
+                  limit: 100,
+                  sort: sortParam,
                 }),
               },
               35000
@@ -86,15 +85,15 @@ serve(async (req) => {
             console.log(`Reddit results for "${query}": ${(items || []).length}`);
             const docs: any[] = [];
             for (const item of items || []) {
-              const text = (item.title || "") + (item.body || item.selftext || item.text ? "\n" + (item.body || item.selftext || item.text) : "");
+              const text = (item.title || "") + (item.selftext || item.body || item.text ? "\n" + (item.selftext || item.body || item.text) : "");
               if (text.trim().length > 0) {
                 docs.push({
                   question_id: questionId, source: "reddit",
-                  url: item.url || item.permalink ? `https://reddit.com${item.permalink}` : null,
+                  url: item.url || (item.permalink ? `https://reddit.com${item.permalink}` : null),
                   author: item.author || item.username || null,
                   text: text.slice(0, 2000),
-                  date: item.createdAt || item.created_utc ? new Date((item.created_utc || 0) * 1000).toISOString() : item.createdAt || null,
-                  engagement_metrics: { score: item.score || item.ups || 0, comments: item.numberOfComments || item.num_comments || 0 },
+                  date: item.created_utc ? new Date(item.created_utc * 1000).toISOString() : item.createdAt || item.created || null,
+                  engagement_metrics: { score: item.score || item.ups || 0, comments: item.num_comments || item.numberOfComments || 0 },
                 });
               }
             }
@@ -268,7 +267,6 @@ serve(async (req) => {
           if (r.status !== "fulfilled") continue;
           for (const item of r.value) {
             const url = item.url || "";
-            if (!url.includes("substack")) continue;
             if (seenUrls.has(url)) continue;
             seenUrls.add(url);
             const text = item.markdown || item.description || "";
