@@ -40,12 +40,10 @@ serve(async (req) => {
     const insertDocs = async (docs: any[]) => {
       const filtered = docs.filter((d) => {
         if (!d.text || d.text.trim().length === 0) return false;
-        if (d.date) {
-          const docDate = new Date(d.date);
-          if (!isNaN(docDate.getTime()) && docDate < cutoffDate) return false;
-        } else {
-          if (d.source !== "substack") return false;
-        }
+        if (!d.date) return false; // No date = can't verify time range, reject
+        const docDate = new Date(d.date);
+        if (isNaN(docDate.getTime())) return false;
+        if (docDate < cutoffDate) return false;
         return true;
       });
       if (filtered.length > 0) {
