@@ -180,7 +180,17 @@ export default function Results() {
     { name: "Negative", value: dist.negative, color: "hsl(var(--chart-negative))" },
   ];
 
-  const barData = Object.entries(sourceBreakdown).map(([name, count]) => ({ name, count }));
+  const sourceDisplayNames: Record<string, string> = {
+    reddit: "Reddit",
+    hackernews: "Hacker News",
+    substack: "Substack",
+    x: "X (Twitter)",
+    stackoverflow: "Stack Overflow",
+  };
+  const barData = Object.entries(sourceBreakdown).map(([name, count]) => ({
+    name: sourceDisplayNames[name] || name,
+    count,
+  }));
 
   const getScoreColor = (score: number | null) => {
     if (score === null) return "text-muted-foreground";

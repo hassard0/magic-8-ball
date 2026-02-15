@@ -111,96 +111,79 @@ serve(async (req) => {
       return docs;
     };
 
-    // Helper for X (Twitter) via Apify
+    // Helper for X (Twitter) via Apify - viralanalyzer/twitter-scraper (free, pay-per-usage)
     const fetchX = async (queries: string[]) => {
       const docs: any[] = [];
       try {
         console.log("X/Twitter: searching with queries:", queries);
-        // Use Apify's X Twitter Posts Search actor
-        const searchUrls = queries.map(q => `https://x.com/search?q=${encodeURIComponent(q)}&f=top`);
-        const runRes = await fetch("https://api.apify.com/v2/acts/scrapier~x-twitter-posts-search/run-sync-get-dataset-items?token=" + APIFY_API_KEY, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            startUrls: searchUrls.map(url => ({ url })),
-            maxTweets: 50,
-            sortOrder: "top",
-          }),
-        });
-        if (runRes.ok) {
-          const items = await runRes.json();
-          console.log(`X/Twitter results: ${(items || []).length}`);
-          for (const item of items || []) {
-            const text = item.full_text || item.text || item.description || "";
-            if (text.trim().length > 0) {
-              docs.push({
-                question_id: questionId, source: "x",
-                url: item.url || null,
-                author: item.user_posted || item.name || item.author?.userName || null,
-                text: text.slice(0, 1500),
-                date: item.date_posted || item.created_at || item.createdAt || null,
-                engagement_metrics: {
-                  likes: item.likes || item.favorite_count || 0,
-                  retweets: item.rePosts || item.retweet_count || 0,
-                  replies: item.replies || item.reply_count || 0,
-                },
-              });
+        for (const query of queries) {
+          const runRes = await fetch("https://api.apify.com/v2/acts/viralanalyzer~twitter-scraper/run-sync-get-dataset-items?token=" + APIFY_API_KEY, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              searchQuery: query,
+              maxTweets: 30,
+              tweetType: "top",
+            }),
+          });
+          if (runRes.ok) {
+            const items = await runRes.json();
+            console.log(`X/Twitter results for "${query}": ${(items || []).length}`);
+            for (const item of items || []) {
+              const text = item.full_text || item.text || item.tweet_text || "";
+              if (text.trim().length > 0) {
+                docs.push({
+                  question_id: questionId, source: "x",
+                  url: item.tweet_url || item.url || null,
+                  author: item.username || item.screen_name || item.user?.screen_name || null,
+                  text: text.slice(0, 1500),
+                  date: item.created_at || item.date || null,
+                  engagement_metrics: {
+                    likes: item.likes || item.favorite_count || 0,
+                    retweets: item.retweets || item.retweet_count || 0,
+                    replies: item.replies || item.reply_count || 0,
+                    views: item.views || 0,
+                  },
+                });
+              }
             }
+          } else {
+            const errText = await runRes.text();
+            console.error("X/Twitter Apify failed:", runRes.status, errText);
           }
-        } else {
-          const errText = await runRes.text();
-          console.error("X/Twitter Apify failed:", runRes.status, errText);
         }
       } catch (e) { console.error("X/Twitter error:", e); }
       return docs;
     };
 
-    // Helper for Stack Overflow via Firecrawl search
+    // Helper for Stack Overflow via Stack Exchange API (free, no key needed)
     const fetchStackOverflow = async (query: string) => {
       const docs: any[] = [];
       try {
-        const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY");
-        if (!FIRECRAWL_API_KEY) {
-          console.error("FIRECRAWL_API_KEY not configured, skipping StackOverflow");
-          return docs;
-        }
-
-        const searchQuery = `site:stackoverflow.com ${query}`;
-        console.log(`StackOverflow (Firecrawl) searching: ${searchQuery}`);
-        const res = await fetch("https://api.firecrawl.dev/v1/search", {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${FIRECRAWL_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            query: searchQuery,
-            limit: 15,
-            scrapeOptions: { formats: ["markdown"] },
-          }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          const results = data?.data || [];
-          console.log(`StackOverflow (Firecrawl) results: ${results.length}`);
-          for (const item of results) {
-            const url = item.url || "";
-            if (!url.includes("stackoverflow.com")) continue;
-
-            const text = item.markdown || item.description || "";
+        console.log(`StackOverflow API searching: ${query}`);
+        const soRes = await fetch(
+          `https://api.stackexchange.com/2.3/search/advanced?order=desc&sort=relevance&q=${encodeURIComponent(query)}&site=stackoverflow&pagesize=25&filter=withbody`
+        );
+        if (soRes.ok) {
+          const data = await soRes.json();
+          const items = data.items || [];
+          console.log(`StackOverflow API results: ${items.length} (quota remaining: ${data.quota_remaining})`);
+          for (const item of items) {
+            const body = (item.body || "").replace(/<[^>]+>/g, "");
+            const text = `${item.title}\n${body}`;
             if (text.trim().length > 0) {
               docs.push({
                 question_id: questionId, source: "stackoverflow",
-                url: url || null,
-                author: item.metadata?.author || null,
+                url: item.link || null,
+                author: item.owner?.display_name || null,
                 text: text.slice(0, 2000),
-                date: item.metadata?.publishedTime || null,
-                engagement_metrics: {},
+                date: item.creation_date ? new Date(item.creation_date * 1000).toISOString() : null,
+                engagement_metrics: { score: item.score, answers: item.answer_count, views: item.view_count },
               });
             }
           }
         } else {
-          console.error("StackOverflow Firecrawl failed:", res.status, await res.text());
+          console.error("StackOverflow API failed:", soRes.status, await soRes.text());
         }
       } catch (e) { console.error("StackOverflow error:", e); }
       return docs;
