@@ -54,44 +54,46 @@ serve(async (req) => {
       return filtered.length;
     };
 
-    // ── Reddit via Apify (vulnv/reddit-posts-search-scraper — pay-per-result, no subscription) ──
+    // ── Reddit via Apify (parseforge/reddit-posts-scraper — 1000+ posts/min, pay-per-event) ──
     const fetchReddit = async (queries: string[]) => {
       try {
         const allDocs: any[] = [];
-        const sortParam = timeRangeDays <= 7 ? "new" : "relevance";
+        const sortParam = timeRangeDays <= 7 ? "new" : "top";
+        const timeParam = timeRangeDays <= 7 ? "week" : timeRangeDays <= 30 ? "month" : "year";
         const results = await Promise.allSettled(
           queries.map(async (query) => {
-            console.log(`Reddit (Apify vulnv): searching "${query}" sort=${sortParam} limit=100`);
+            console.log(`Reddit (parseforge): searching "${query}" sort=${sortParam} time=${timeParam}`);
             const res = await fetchWithTimeout(
-              "https://api.apify.com/v2/acts/vulnv~reddit-posts-search-scraper/run-sync-get-dataset-items?token=" + APIFY_API_KEY,
+              "https://api.apify.com/v2/acts/parseforge~reddit-posts-scraper/run-sync-get-dataset-items?token=" + APIFY_API_KEY,
               {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                  keyword: query,
-                  limit: 100,
+                  searchQueries: [query],
                   sort: sortParam,
+                  time: timeParam,
+                  maxItems: 100,
                 }),
               },
               50000
             );
             if (!res.ok) {
-              console.error(`Reddit Apify failed for "${query}":`, res.status, await res.text());
+              console.error(`Reddit parseforge failed for "${query}":`, res.status, await res.text());
               return [];
             }
             const items = await res.json();
             console.log(`Reddit results for "${query}": ${(items || []).length}`);
             const docs: any[] = [];
             for (const item of items || []) {
-              const text = (item.title || "") + (item.selftext || item.body || item.text ? "\n" + (item.selftext || item.body || item.text) : "");
+              const text = (item.title || "") + (item.selfText ? "\n" + item.selfText : "");
               if (text.trim().length > 0) {
                 docs.push({
                   question_id: questionId, source: "reddit",
                   url: item.url || (item.permalink ? `https://reddit.com${item.permalink}` : null),
-                  author: item.author || item.username || null,
+                  author: item.author || null,
                   text: text.slice(0, 2000),
-                  date: item.created_utc ? new Date(item.created_utc * 1000).toISOString() : item.createdAt || item.created || null,
-                  engagement_metrics: { score: item.score || item.ups || 0, comments: item.num_comments || item.numberOfComments || 0 },
+                  date: item.createdAt || null,
+                  engagement_metrics: { score: item.score || 0, comments: item.numComments || 0 },
                 });
               }
             }
