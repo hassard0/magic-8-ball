@@ -17,3 +17,9 @@ verify_jwt = false
 
 [functions.filter-relevance]
 verify_jwt = false
+
+[functions.optimize-queries]
+verify_jwt = false
+
+[functions.firecrawl-search]
+verify_jwt = false

@@ -105,44 +105,38 @@ serve(async (req) => {
 
     if (classification.type === "comparative") {
       // === COMPARATIVE FLOW ===
-      // Collect data for both entities, tag documents, then analyze together
-      await supabase.from("questions").update({ progress_step: `Collecting data for ${classification.entity_a}...` }).eq("id", questionId);
+      // Collect data for both entities IN PARALLEL to stay within timeout
+      await supabase.from("questions").update({ progress_step: `Collecting data for ${classification.entity_a} & ${classification.entity_b}...` }).eq("id", questionId);
 
-      const collectA = await fetchWithTimeout(`${supabaseUrl}/functions/v1/apify-collect`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          questionId,
-          questionText: classification.entity_a,
-          sources: question.sources,
-          timeRange: question.time_range,
-          optimizedQueries: classification.queries_a || {},
-          entityTag: classification.entity_a,
-        }),
-      }, 50000);
+      const [collectA, collectB] = await Promise.all([
+        fetchWithTimeout(`${supabaseUrl}/functions/v1/apify-collect`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            questionId,
+            questionText: classification.entity_a,
+            sources: question.sources,
+            timeRange: question.time_range,
+            optimizedQueries: classification.queries_a || {},
+            entityTag: classification.entity_a,
+          }),
+        }, 50000),
+        fetchWithTimeout(`${supabaseUrl}/functions/v1/apify-collect`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            questionId,
+            questionText: classification.entity_b,
+            sources: question.sources,
+            timeRange: question.time_range,
+            optimizedQueries: classification.queries_b || {},
+            entityTag: classification.entity_b,
+          }),
+        }, 50000),
+      ]);
 
-      if (!collectA.ok) {
-        console.error("Collect entity A error:", await collectA.text());
-      }
-
-      await supabase.from("questions").update({ progress_step: `Collecting data for ${classification.entity_b}...` }).eq("id", questionId);
-
-      const collectB = await fetchWithTimeout(`${supabaseUrl}/functions/v1/apify-collect`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          questionId,
-          questionText: classification.entity_b,
-          sources: question.sources,
-          timeRange: question.time_range,
-          optimizedQueries: classification.queries_b || {},
-          entityTag: classification.entity_b,
-        }),
-      }, 50000);
-
-      if (!collectB.ok) {
-        console.error("Collect entity B error:", await collectB.text());
-      }
+      if (!collectA.ok) console.error("Collect entity A error:", await collectA.text());
+      if (!collectB.ok) console.error("Collect entity B error:", await collectB.text());
     } else {
       // === STANDARD / ABSTRACT FLOW ===
       await supabase.from("questions").update({ progress_step: "Collecting data from sources..." }).eq("id", questionId);
@@ -165,23 +159,25 @@ serve(async (req) => {
       }
     }
 
-    // Step 2: Filter irrelevant documents
-    await supabase.from("questions").update({ progress_step: "Filtering for relevance..." }).eq("id", questionId);
-    try {
-      const filterResponse = await fetchWithTimeout(`${supabaseUrl}/functions/v1/filter-relevance`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ questionId }),
-      }, 50000);
+    // Step 2: Filter irrelevant documents (skip for comparative — AI handles it during analysis)
+    if (classification.type !== "comparative") {
+      await supabase.from("questions").update({ progress_step: "Filtering for relevance..." }).eq("id", questionId);
+      try {
+        const filterResponse = await fetchWithTimeout(`${supabaseUrl}/functions/v1/filter-relevance`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ questionId }),
+        }, 40000);
 
-      if (filterResponse.ok) {
-        const filterData = await filterResponse.json();
-        console.log(`Relevance filter: kept ${filterData.kept}, removed ${filterData.removed}`);
-      } else {
-        console.error("Filter relevance error:", await filterResponse.text());
+        if (filterResponse.ok) {
+          const filterData = await filterResponse.json();
+          console.log(`Relevance filter: kept ${filterData.kept}, removed ${filterData.removed}`);
+        } else {
+          console.error("Filter relevance error:", await filterResponse.text());
+        }
+      } catch (e) {
+        console.error("Filter relevance error (non-fatal):", e);
       }
-    } catch (e) {
-      console.error("Filter relevance error (non-fatal):", e);
     }
 
     // Step 3: Analyze sentiment (pass comparison metadata)
