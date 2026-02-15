@@ -145,7 +145,7 @@ export default function Results() {
         <div className="space-y-4">
           <Skeleton className="h-8 w-64" />
           <Skeleton className="h-32 w-full" />
-          <div className="grid grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-24" />)}
           </div>
         </div>
@@ -367,7 +367,7 @@ function StandardView({ analysis, dist, themes, quotes, sourceBreakdown, documen
       </Card>
 
       {/* Metrics row */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <Card><CardContent className="pt-4 pb-3"><p className="text-xs text-muted-foreground">Confidence</p><p className="text-xl font-mono font-semibold">{analysis.confidence ? `${Math.round(Number(analysis.confidence) * 100)}%` : "—"}</p></CardContent></Card>
         <Card><CardContent className="pt-4 pb-3"><p className="text-xs text-muted-foreground">Mentions</p><p className="text-xl font-mono font-semibold">{documents.length}</p></CardContent></Card>
         <Card><CardContent className="pt-4 pb-3"><p className="text-xs text-muted-foreground">Sources</p><p className="text-xl font-mono font-semibold">{Object.keys(sourceBreakdown).length}</p></CardContent></Card>
@@ -375,7 +375,7 @@ function StandardView({ analysis, dist, themes, quotes, sourceBreakdown, documen
       </div>
 
       {/* Charts */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Sentiment Distribution</CardTitle></CardHeader>
           <CardContent>
@@ -542,7 +542,7 @@ function ComparisonView({ analysis, entityA, entityB, themes, quotes, sourceBrea
       </Card>
 
       {/* Side-by-side entity cards */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <EntityCard entity={entityA} label="A" />
         <EntityCard entity={entityB} label="B" />
       </div>
@@ -584,7 +584,7 @@ function ComparisonView({ analysis, entityA, entityB, themes, quotes, sourceBrea
 
       {/* Quotes — grouped by entity */}
       {quotes.length > 0 && (
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {[entityA.name, entityB.name].map((entityName) => {
             const entityQuotes = quotes.filter(q => q.entity === entityName);
             return (

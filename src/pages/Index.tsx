@@ -112,7 +112,7 @@ export default function Index() {
         </Card>
 
         {/* Stats row */}
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <Card>
             <CardContent className="pt-5 pb-4">
               <div className="flex items-center gap-3">
@@ -170,10 +170,10 @@ export default function Index() {
                   <button
                     key={q.id}
                     onClick={() => navigate(`/results/${q.id}`)}
-                    className="w-full flex items-center justify-between px-3 py-2.5 rounded-md hover:bg-secondary/50 transition-colors text-left cursor-pointer"
+                    className="w-full flex flex-col sm:flex-row sm:items-center justify-between px-3 py-2.5 rounded-md hover:bg-secondary/50 transition-colors text-left cursor-pointer gap-1"
                   >
-                    <span className="text-sm truncate max-w-[70%]">{q.question_text}</span>
-                    <div className="flex items-center gap-3">
+                    <span className="text-sm truncate">{q.question_text}</span>
+                    <div className="flex items-center gap-3 shrink-0">
                       <span className="text-xs text-muted-foreground font-mono">
                         {new Date(q.created_at).toLocaleDateString()}
                       </span>
