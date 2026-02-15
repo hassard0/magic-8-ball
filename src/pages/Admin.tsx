@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
-import { UserPlus, Mail, Loader2 } from "lucide-react";
+import { UserPlus, Mail, Loader2, Trash2, RotateCw } from "lucide-react";
 import type { Tables, Json } from "@/integrations/supabase/types";
 
 type Profile = Tables<"profiles">;
@@ -85,6 +85,32 @@ export default function Admin() {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     } finally {
       setInviting(false);
+    }
+  };
+
+  const handleDeleteInvite = async (inviteId: string) => {
+    try {
+      const { error } = await supabase.from("invites").delete().eq("id", inviteId);
+      if (error) throw error;
+      toast({ title: "Invite deleted" });
+      loadData();
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    }
+  };
+
+  const handleRetryInvite = async (invite: Invite) => {
+    try {
+      // Delete old invite and send a new one
+      await supabase.from("invites").delete().eq("id", invite.id);
+      const { error } = await supabase.functions.invoke("invite-user", {
+        body: { email: invite.email, orgId: invite.org_id, role: invite.role },
+      });
+      if (error) throw error;
+      toast({ title: "Invite resent", description: `New invitation sent to ${invite.email}` });
+      loadData();
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
     }
   };
 
@@ -182,10 +208,18 @@ export default function Admin() {
                           <div className="flex items-center gap-2">
                             <Mail className="h-3.5 w-3.5 text-muted-foreground" />
                             <span className="text-sm">{i.email}</span>
+                            <span className="text-xs text-muted-foreground font-mono">
+                              Expires {new Date(i.expires_at).toLocaleDateString()}
+                            </span>
                           </div>
-                          <span className="text-xs text-muted-foreground font-mono">
-                            Expires {new Date(i.expires_at).toLocaleDateString()}
-                          </span>
+                          <div className="flex items-center gap-1">
+                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleRetryInvite(i)} title="Resend invite">
+                              <RotateCw className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => handleDeleteInvite(i.id)} title="Delete invite">
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
                         </div>
                       ))}
                   </div>
