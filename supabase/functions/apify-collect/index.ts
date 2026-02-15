@@ -6,6 +6,26 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+/** Wrap a fetch with a per-source timeout so one slow source can't block everything */
+function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = 25000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer));
+}
+
+/** Wrap a source task with a timeout — returns empty array on timeout instead of failing */
+function withSourceTimeout<T>(promise: Promise<T[]>, label: string, timeoutMs = 30000): Promise<T[]> {
+  return Promise.race([
+    promise,
+    new Promise<T[]>((resolve) => {
+      setTimeout(() => {
+        console.warn(`${label}: timed out after ${timeoutMs / 1000}s, skipping`);
+        resolve([]);
+      }, timeoutMs);
+    }),
+  ]);
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
@@ -38,7 +58,7 @@ serve(async (req) => {
       const docs: any[] = [];
       try {
         console.log("Reddit: sending all queries in one call:", queries);
-        const runRes = await fetch("https://api.apify.com/v2/acts/trudax~reddit-scraper-lite/run-sync-get-dataset-items?token=" + APIFY_API_KEY, {
+        const runRes = await fetchWithTimeout("https://api.apify.com/v2/acts/trudax~reddit-scraper-lite/run-sync-get-dataset-items?token=" + APIFY_API_KEY, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -117,7 +137,7 @@ serve(async (req) => {
       try {
         console.log("X/Twitter: searching with queries:", queries);
         for (const query of queries) {
-          const runRes = await fetch("https://api.apify.com/v2/acts/viralanalyzer~twitter-scraper/run-sync-get-dataset-items?token=" + APIFY_API_KEY, {
+          const runRes = await fetchWithTimeout("https://api.apify.com/v2/acts/viralanalyzer~twitter-scraper/run-sync-get-dataset-items?token=" + APIFY_API_KEY, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -257,31 +277,34 @@ serve(async (req) => {
     if (sources.includes("reddit")) {
       const queries = getQueries("reddit");
       console.log("Reddit queries:", queries);
-      tasks.push(fetchReddit(queries)); // pass all queries at once
+      tasks.push(withSourceTimeout(fetchReddit(queries), "Reddit"));
     }
     if (sources.includes("hackernews")) {
       const queries = getQueries("hackernews");
       console.log("HN queries:", queries);
-      for (const q of queries) tasks.push(fetchHN(q));
+      for (const q of queries) tasks.push(withSourceTimeout(fetchHN(q), `HN:${q}`));
     }
     if (sources.includes("substack")) {
       const queries = getQueries("substack");
       console.log("Substack queries:", queries);
-      for (const q of queries) tasks.push(fetchSubstack(q));
+      for (const q of queries) tasks.push(withSourceTimeout(fetchSubstack(q), `Substack:${q}`));
     }
     if (sources.includes("x")) {
       const queries = getQueries("x");
       console.log("X/Twitter queries:", queries);
-      tasks.push(fetchX(queries)); // pass all queries at once like Reddit
+      tasks.push(withSourceTimeout(fetchX(queries), "X/Twitter"));
     }
     if (sources.includes("stackoverflow")) {
       const queries = getQueries("stackoverflow");
       console.log("StackOverflow queries:", queries);
-      for (const q of queries) tasks.push(fetchStackOverflow(q));
+      for (const q of queries) tasks.push(withSourceTimeout(fetchStackOverflow(q), `SO:${q}`, 15000));
     }
 
-    const results = await Promise.all(tasks);
-    for (const docs of results) allDocuments.push(...docs);
+    const settled = await Promise.allSettled(tasks);
+    for (const result of settled) {
+      if (result.status === "fulfilled") allDocuments.push(...result.value);
+      else console.error("Source task rejected:", result.reason);
+    }
 
     // Filter documents: must have text AND be within the requested time range
     if (allDocuments.length > 0) {
