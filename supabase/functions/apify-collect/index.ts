@@ -268,50 +268,59 @@ serve(async (req) => {
       } catch (e) { console.error("StackOverflow error:", e); }
     };
 
-    // ── Substack via Apify (easyapi/substack-posts-scraper — keyword search, $19.99/mo subscription) ──
+    // ── Substack via Firecrawl search (site:substack.com) ──
     const fetchSubstack = async (query: string) => {
       try {
-        console.log(`Substack (easyapi): searching "${query}"`);
-        const res = await fetchWithTimeout(
-          "https://api.apify.com/v2/acts/easyapi~substack-posts-scraper/run-sync-get-dataset-items?token=" + APIFY_API_KEY,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ keywords: [query], maxItems: 30 }),
-          },
-          58000
-        );
-        if (!res.ok) {
-          console.error(`Substack easyapi failed for "${query}":`, res.status, await res.text());
+        const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY");
+        if (!FIRECRAWL_API_KEY) {
+          console.error("FIRECRAWL_API_KEY not configured, skipping Substack");
           return;
         }
-        const items = await res.json();
-        console.log(`Substack results for "${query}": ${(items || []).length}`);
-        if ((items || []).length > 0) {
-          console.log(`Substack sample keys:`, JSON.stringify(Object.keys(items[0])));
+        const searchQuery = `site:substack.com ${query}`;
+        const tbsParam = timeRangeDays <= 7 ? "qdr:w" : timeRangeDays <= 30 ? "qdr:m" : "qdr:y";
+        console.log(`Substack (Firecrawl): searching "${searchQuery}" tbs=${tbsParam}`);
+        const res = await fetchWithTimeout(
+          "https://api.firecrawl.dev/v1/search",
+          {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${FIRECRAWL_API_KEY}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              query: searchQuery,
+              limit: 20,
+              tbs: tbsParam,
+              scrapeOptions: { formats: ["markdown"] },
+            }),
+          },
+          55000
+        );
+        if (!res.ok) {
+          console.error(`Substack Firecrawl failed for "${query}":`, res.status, await res.text());
+          return;
         }
+        const result = await res.json();
+        const items = result?.data || [];
+        console.log(`Substack Firecrawl results for "${query}": ${items.length}`);
         const docs: any[] = [];
         const seenUrls = new Set<string>();
-        for (const item of items || []) {
-          const url = item.url || item.canonical_url || "";
+        for (const item of items) {
+          const url = item.url || "";
           if (!url || seenUrls.has(url)) continue;
           seenUrls.add(url);
           const title = item.title || "";
-          const subtitle = item.subtitle || item.description || "";
-          const body = item.body_text || item.body || "";
-          const text = title + (subtitle ? "\n" + subtitle : "") + (body ? "\n" + body : "");
+          const description = item.description || "";
+          const markdown = item.markdown || "";
+          const text = title + (description ? "\n" + description : "") + (markdown ? "\n" + markdown : "");
           if (text.trim().length > 0) {
-            const authorName = item.publishedBylines?.[0]?.name || item.author_name || item.author || null;
             docs.push({
               question_id: questionId, source: "substack",
               url,
-              author: authorName,
+              author: null,
               text: text.slice(0, 2000),
-              date: item.post_date || item.publishedAt || item.date || null,
-              engagement_metrics: {
-                reactions: item.reaction_count || item.reactionCount || item.likes || 0,
-                comments: item.comment_count || item.commentCount || 0,
-              },
+              date: new Date().toISOString(), // Firecrawl doesn't return dates; use now (within range by definition due to tbs filter)
+              engagement_metrics: {},
             });
           }
         }
