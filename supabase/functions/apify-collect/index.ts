@@ -272,96 +272,58 @@ serve(async (req) => {
       } catch (e) { console.error("StackOverflow error:", e); }
     };
 
-    // ── Substack via Apify (automation-lab/substack-scraper — pay-per-event, uses Substack JSON API) ──
+    // ── Substack via Apify (easyapi/substack-posts-scraper — keyword search, $19.99/mo subscription) ──
     const fetchSubstack = async (query: string) => {
       try {
-        console.log(`Substack: searching for newsletters about "${query}"`);
-        const docs: any[] = [];
-        const seenUrls = new Set<string>();
-
-        // Step 1: Discover relevant Substack publication URLs via Substack's own search
-        // Substack search returns publications matching the query
-        const searchRes = await fetchWithTimeout(
-          `https://substack.com/api/v1/publication/search?query=${encodeURIComponent(query)}&page=0&limit=10`,
-          { method: "GET", headers: { "Accept": "application/json" } },
-          10000
-        );
-
-        const newsletterUrls: string[] = [];
-        if (searchRes.ok) {
-          const pubs = await searchRes.json();
-          const pubList = Array.isArray(pubs) ? pubs : pubs?.results || pubs?.publications || [];
-          for (const pub of pubList.slice(0, 5)) {
-            const base = pub.base_url || pub.custom_domain || (pub.subdomain ? `https://${pub.subdomain}.substack.com` : null);
-            if (base) newsletterUrls.push(base);
-          }
-          console.log(`Substack: found ${newsletterUrls.length} newsletters:`, newsletterUrls);
-        } else {
-          console.error("Substack publication search failed:", searchRes.status);
-          // Fallback: construct common substack URLs from query terms
-          const slug = query.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 30);
-          newsletterUrls.push(`https://${slug}.substack.com`);
-        }
-
-        if (newsletterUrls.length === 0) {
-          console.log(`Substack: no newsletters found for "${query}"`);
-          return;
-        }
-
-        // Step 2: Scrape posts from discovered newsletters using automation-lab actor
-        const cutoffStr = cutoffDate.toISOString().split("T")[0]; // YYYY-MM-DD
+        console.log(`Substack (easyapi): searching "${query}"`);
         const res = await fetchWithTimeout(
-          "https://api.apify.com/v2/acts/automation-lab~substack-scraper/run-sync-get-dataset-items?token=" + APIFY_API_KEY,
+          "https://api.apify.com/v2/acts/easyapi~substack-posts-scraper/run-sync-get-dataset-items?token=" + APIFY_API_KEY,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              urls: newsletterUrls,
-              maxPostsPerNewsletter: 20,
-              includeContent: false, // metadata only — faster & cheaper
-              includeComments: false,
-              includePublicationInfo: false,
-              startDate: cutoffStr,
-            }),
+            body: JSON.stringify({ keywords: [query], maxItems: 50 }),
           },
           45000
         );
-
         if (!res.ok) {
-          console.error(`Substack automation-lab failed:`, res.status, await res.text());
+          console.error(`Substack easyapi failed for "${query}":`, res.status, await res.text());
           return;
         }
-
         const items = await res.json();
-        console.log(`Substack scraper results: ${(items || []).length}`);
-
+        console.log(`Substack results for "${query}": ${(items || []).length}`);
+        if ((items || []).length > 0) {
+          console.log(`Substack sample keys:`, JSON.stringify(Object.keys(items[0])));
+        }
+        const docs: any[] = [];
+        const seenUrls = new Set<string>();
         for (const item of items || []) {
           const url = item.url || item.canonical_url || "";
           if (!url || seenUrls.has(url)) continue;
           seenUrls.add(url);
           const title = item.title || "";
-          const subtitle = item.subtitle || "";
-          const text = title + (subtitle ? "\n" + subtitle : "");
+          const subtitle = item.subtitle || item.description || "";
+          const body = item.body_text || item.body || "";
+          const text = title + (subtitle ? "\n" + subtitle : "") + (body ? "\n" + body : "");
           if (text.trim().length > 0) {
+            const authorName = item.publishedBylines?.[0]?.name || item.author_name || item.author || null;
             docs.push({
               question_id: questionId, source: "substack",
               url,
-              author: item.authorName || item.author_name || null,
+              author: authorName,
               text: text.slice(0, 2000),
-              date: item.publishedAt || item.post_date || null,
+              date: item.post_date || item.publishedAt || item.date || null,
               engagement_metrics: {
-                reactions: item.reactionCount || 0,
-                comments: item.commentCount || 0,
+                reactions: item.reaction_count || item.reactionCount || item.likes || 0,
+                comments: item.comment_count || item.commentCount || 0,
               },
             });
           }
         }
-
         if (docs.length > 0) {
           const count = await insertDocs(docs);
           console.log(`Substack: inserted ${count} docs`);
         } else {
-          console.log(`Substack: no results found for "${query}"`);
+          console.log(`Substack: no results for "${query}"`);
         }
       } catch (e) { console.error("Substack error:", e); }
     };
