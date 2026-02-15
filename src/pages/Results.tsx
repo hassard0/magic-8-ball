@@ -596,7 +596,8 @@ function ComparisonView({ analysis, entityA, entityB, themes, quotes, sourceBrea
       {quotes.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {[entityA.name, entityB.name].map((entityName) => {
-            const entityQuotes = quotes.filter(q => q.entity === entityName);
+            const sentimentOrder: Record<string, number> = { positive: 0, neutral: 1, negative: 2 };
+            const entityQuotes = quotes.filter(q => q.entity === entityName).sort((a, b) => (sentimentOrder[a.sentiment] ?? 1) - (sentimentOrder[b.sentiment] ?? 1));
             return (
               <Card key={entityName}>
                 <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Quotes — {entityName}</CardTitle></CardHeader>
@@ -633,11 +634,13 @@ function ComparisonView({ analysis, entityA, entityB, themes, quotes, sourceBrea
 // ============ SHARED COMPONENTS ============
 function QuotesSection({ quotes }: { quotes: Quote[] }) {
   if (quotes.length === 0) return null;
+  const sentimentOrder: Record<string, number> = { positive: 0, neutral: 1, negative: 2 };
+  const sortedQuotes = [...quotes].sort((a, b) => (sentimentOrder[a.sentiment] ?? 1) - (sentimentOrder[b.sentiment] ?? 1));
   return (
     <Card>
       <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">Representative Quotes</CardTitle></CardHeader>
       <CardContent className="space-y-3">
-        {quotes.map((q, i) => (
+        {sortedQuotes.map((q, i) => (
           <div key={i} className="p-3 rounded-md bg-secondary/30 border-l-2 border-primary/50">
             <p className="text-sm italic">"{q.text}"</p>
             <div className="flex items-center gap-2 mt-2">
