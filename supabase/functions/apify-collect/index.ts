@@ -115,39 +115,59 @@ serve(async (req) => {
     const fetchX = async (queries: string[]) => {
       const docs: any[] = [];
       try {
-        console.log("X/Twitter: searching with queries:", queries);
-        const runRes = await fetch("https://api.apify.com/v2/acts/quacker~twitter-scraper/run-sync-get-dataset-items?token=" + APIFY_API_KEY, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            searchTerms: queries,
-            maxTweets: 50,
-            sort: "Top",
-          }),
-        });
-        if (runRes.ok) {
-          const items = await runRes.json();
-          console.log(`X/Twitter results: ${(items || []).length}`);
-          for (const item of items || []) {
-            const text = item.full_text || item.text || "";
-            if (text.trim().length > 0) {
-              docs.push({
-                question_id: questionId, source: "x",
-                url: item.url || (item.id_str ? `https://x.com/i/status/${item.id_str}` : null),
-                author: item.user?.screen_name || item.author?.userName || null,
-                text,
-                date: item.created_at || item.createdAt || null,
-                engagement_metrics: {
-                  likes: item.favorite_count || item.likeCount || 0,
-                  retweets: item.retweet_count || item.retweetCount || 0,
-                  replies: item.reply_count || item.replyCount || 0,
-                },
-              });
+        // Use Firecrawl to search X/Twitter content since Apify actors are unreliable
+        const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY");
+        if (!FIRECRAWL_API_KEY) {
+          console.error("FIRECRAWL_API_KEY not configured, skipping X/Twitter");
+          return docs;
+        }
+
+        const seenUrls = new Set<string>();
+        for (const query of queries) {
+          const searches = [
+            `site:x.com ${query}`,
+            `site:twitter.com ${query}`,
+          ];
+          for (const searchQuery of searches) {
+            console.log(`X/Twitter (Firecrawl) searching: ${searchQuery}`);
+            const res = await fetch("https://api.firecrawl.dev/v1/search", {
+              method: "POST",
+              headers: {
+                "Authorization": `Bearer ${FIRECRAWL_API_KEY}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                query: searchQuery,
+                limit: 10,
+                scrapeOptions: { formats: ["markdown"] },
+              }),
+            });
+            if (res.ok) {
+              const data = await res.json();
+              const results = data?.data || [];
+              console.log(`X/Twitter (Firecrawl) results for "${searchQuery}": ${results.length}`);
+              for (const item of results) {
+                const url = item.url || "";
+                if (!url.includes("x.com") && !url.includes("twitter.com")) continue;
+                if (seenUrls.has(url)) continue;
+                seenUrls.add(url);
+
+                const text = item.markdown || item.description || "";
+                if (text.trim().length > 0) {
+                  docs.push({
+                    question_id: questionId, source: "x",
+                    url: url || null,
+                    author: item.metadata?.author || item.metadata?.ogSiteName || null,
+                    text: text.slice(0, 1500),
+                    date: item.metadata?.publishedTime || null,
+                    engagement_metrics: {},
+                  });
+                }
+              }
+            } else {
+              console.error(`X/Twitter Firecrawl failed:`, res.status, await res.text());
             }
           }
-        } else {
-          const errText = await runRes.text();
-          console.error("X/Twitter failed:", runRes.status, errText);
         }
       } catch (e) { console.error("X/Twitter error:", e); }
       return docs;
@@ -158,14 +178,14 @@ serve(async (req) => {
       const docs: any[] = [];
       try {
         const fromDate = Math.floor(cutoffDate.getTime() / 1000);
-        const url = `https://api.stackexchange.com/2.3/search/advanced?order=desc&sort=relevance&q=${encodeURIComponent(query)}&fromdate=${fromDate}&site=stackoverflow&pagesize=30&filter=withbody`;
+        const url = `https://api.stackexchange.com/2.3/search/advanced?order=desc&sort=relevance&q=${encodeURIComponent(query)}&fromdate=${fromDate}&site=stackoverflow&pagesize=30`;
         console.log(`StackOverflow searching: ${query}`);
         const res = await fetch(url);
         if (res.ok) {
           const data = await res.json();
           console.log(`StackOverflow results: ${(data.items || []).length}`);
           for (const item of data.items || []) {
-            const text = (item.title || "") + "\n" + (item.body || "").replace(/<[^>]+>/g, "").slice(0, 1500);
+            const text = item.title || "";
             docs.push({
               question_id: questionId, source: "stackoverflow",
               url: item.link || null,
@@ -175,28 +195,7 @@ serve(async (req) => {
               engagement_metrics: { score: item.score, answers: item.answer_count, views: item.view_count },
             });
           }
-          // Also fetch top answers for the top 5 questions
-          const topIds = (data.items || []).slice(0, 5).map((i: any) => i.question_id).join(";");
-          if (topIds) {
-            const ansUrl = `https://api.stackexchange.com/2.3/questions/${topIds}/answers?order=desc&sort=votes&site=stackoverflow&pagesize=20&filter=withbody`;
-            const ansRes = await fetch(ansUrl);
-            if (ansRes.ok) {
-              const ansData = await ansRes.json();
-              for (const ans of ansData.items || []) {
-                const ansText = (ans.body || "").replace(/<[^>]+>/g, "").slice(0, 1500);
-                if (ansText.trim().length > 0) {
-                  docs.push({
-                    question_id: questionId, source: "stackoverflow",
-                    url: `https://stackoverflow.com/a/${ans.answer_id}`,
-                    author: ans.owner?.display_name || null,
-                    text: ansText,
-                    date: ans.creation_date ? new Date(ans.creation_date * 1000).toISOString() : null,
-                    engagement_metrics: { score: ans.score, is_accepted: ans.is_accepted },
-                  });
-                }
-              }
-            }
-          }
+          // No body available without API key filter, titles + metadata are sufficient for sentiment
         } else {
           console.error("StackOverflow failed:", res.status, await res.text());
         }
