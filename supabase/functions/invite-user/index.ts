@@ -71,7 +71,7 @@ serve(async (req) => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          from: "Magic 8-Ball <onboarding@resend.dev>",
+          from: "Magic 8-Ball <noreply@m8b.app>",
           to: [email],
           subject: `You've been invited to ${org?.name || "an organization"} on Magic 8-Ball`,
           html: `
