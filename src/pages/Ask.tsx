@@ -20,16 +20,20 @@ const TIME_RANGES = [
 ];
 
 const SOURCES = [
-  { value: "reddit", label: "Reddit", icon: "🔴" },
-  { value: "hackernews", label: "Hacker News", icon: "🟠" },
-  { value: "substack", label: "Substack", icon: "🟣" },
+  { value: "reddit", label: "Reddit", icon: "🔴", defaultOn: true },
+  { value: "hackernews", label: "Hacker News", icon: "🟠", defaultOn: true },
+  { value: "substack", label: "Substack", icon: "🟣", defaultOn: true },
+  { value: "x", label: "X (Twitter)", icon: "✖️", defaultOn: true },
+  { value: "stackoverflow", label: "Stack Overflow", icon: "📚", defaultOn: false },
 ];
 
 export default function Ask() {
   const [searchParams] = useSearchParams();
   const [question, setQuestion] = useState(searchParams.get("q") || "");
   const [timeRange, setTimeRange] = useState("30d");
-  const [sources, setSources] = useState<string[]>(["reddit", "hackernews", "substack"]);
+  const [sources, setSources] = useState<string[]>(
+    SOURCES.filter((s) => s.defaultOn).map((s) => s.value)
+  );
   const [submitting, setSubmitting] = useState(false);
   const { user, orgId } = useAuth();
   const navigate = useNavigate();
