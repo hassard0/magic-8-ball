@@ -63,7 +63,7 @@ serve(async (req) => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             searches: queries,
-            maxItems: 50,
+            maxItems: 250,
             sort: "relevance",
             time: timeRangeDays <= 7 ? "week" : timeRangeDays <= 30 ? "month" : "year",
           }),
@@ -89,14 +89,14 @@ serve(async (req) => {
       return docs;
     };
 
-    // Helper for HN
+    // Helper for HN — Algolia API supports numericFilters for time range
     const fetchHN = async (query: string) => {
       const docs: any[] = [];
       try {
         const dateFilter = `created_at_i>${cutoffTimestamp}`;
         const [storiesRes, commentsRes] = await Promise.all([
-          fetch(`https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(query)}&tags=story&numericFilters=${dateFilter}&hitsPerPage=20`),
-          fetch(`https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(query)}&tags=comment&numericFilters=${dateFilter}&hitsPerPage=30`),
+          fetch(`https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(query)}&tags=story&numericFilters=${dateFilter}&hitsPerPage=100`),
+          fetch(`https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(query)}&tags=comment&numericFilters=${dateFilter}&hitsPerPage=150`),
         ]);
         if (storiesRes.ok) {
           const data = await storiesRes.json();
@@ -114,6 +114,7 @@ serve(async (req) => {
         }
         if (commentsRes.ok) {
           const data = await commentsRes.json();
+          console.log(`HN comments for "${query}": ${(data.hits || []).length}`);
           for (const c of data.hits || []) {
             if (c.comment_text) {
               docs.push({
@@ -131,7 +132,7 @@ serve(async (req) => {
       return docs;
     };
 
-    // Helper for X (Twitter) via Apify - powerai/twitter-search-scraper (279 users, simple API)
+    // Helper for X (Twitter) via Apify - powerai/twitter-search-scraper
     const fetchXQuery = async (query: string) => {
       const docs: any[] = [];
       try {
@@ -144,7 +145,7 @@ serve(async (req) => {
             body: JSON.stringify({
               query: query,
               searchType: "Top",
-              maxResults: 30,
+              maxResults: 250,
             }),
           },
           40000
@@ -178,13 +179,13 @@ serve(async (req) => {
       return docs;
     };
 
-    // Helper for Stack Overflow via Stack Exchange API (free, no key needed)
+    // Helper for Stack Overflow via Stack Exchange API — uses fromdate for time filtering
     const fetchStackOverflow = async (query: string) => {
       const docs: any[] = [];
       try {
         console.log(`StackOverflow API searching: ${query}`);
         const soRes = await fetch(
-          `https://api.stackexchange.com/2.3/search/advanced?order=desc&sort=relevance&q=${encodeURIComponent(query)}&site=stackoverflow&pagesize=25&filter=withbody`
+          `https://api.stackexchange.com/2.3/search/advanced?order=desc&sort=relevance&q=${encodeURIComponent(query)}&site=stackoverflow&pagesize=100&filter=withbody&fromdate=${cutoffTimestamp}`
         );
         if (soRes.ok) {
           const data = await soRes.json();
@@ -211,8 +212,7 @@ serve(async (req) => {
       return docs;
     };
 
-    // Helper for Substack (via Firecrawl search)
-    // Run two searches: one scoped to substack.com, one broader with "substack" keyword
+    // Helper for Substack (via Firecrawl search) — Firecrawl tbs param for time filtering
     const fetchSubstack = async (query: string) => {
       const docs: any[] = [];
       try {
@@ -221,6 +221,9 @@ serve(async (req) => {
           console.error("FIRECRAWL_API_KEY not configured, skipping Substack");
           return docs;
         }
+
+        // Map time range to Firecrawl tbs param
+        const tbs = timeRangeDays <= 7 ? "qdr:w" : timeRangeDays <= 30 ? "qdr:m" : "qdr:y";
 
         const searches = [
           `site:substack.com ${query}`,
@@ -239,7 +242,8 @@ serve(async (req) => {
             },
             body: JSON.stringify({
               query: searchQuery,
-              limit: 10,
+              limit: 25,
+              tbs,
               scrapeOptions: { formats: ["markdown"] },
             }),
           });
