@@ -73,6 +73,10 @@ serve(async (req) => {
                   sort: sortParam,
                   time: timeParam,
                   maxItems: 100,
+                  proxyConfiguration: {
+                    useApifyProxy: true,
+                    apifyProxyGroups: ["RESIDENTIAL"],
+                  },
                 }),
               },
               50000
@@ -315,12 +319,14 @@ serve(async (req) => {
             seenUrls.add(url);
             const text = (item.title || "") + (item.description || item.snippet ? "\n" + (item.description || item.snippet) : "");
             if (text.trim().length > 0) {
+              // Google Search results rarely have dates; use today as proxy since search results are recent
+              const docDate = item.date || new Date().toISOString();
               docs.push({
                 question_id: questionId, source: "substack",
                 url: url || null,
                 author: item.displayedUrl || null,
                 text: text.slice(0, 2000),
-                date: item.date || null,
+                date: docDate,
                 engagement_metrics: {},
               });
             }
