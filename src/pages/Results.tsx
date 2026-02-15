@@ -175,9 +175,9 @@ export default function Results() {
       }, {});
 
   const pieData = [
-    { name: "Positive", value: dist.positive, color: "hsl(var(--chart-positive))" },
-    { name: "Neutral", value: dist.neutral, color: "hsl(var(--chart-neutral))" },
-    { name: "Negative", value: dist.negative, color: "hsl(var(--chart-negative))" },
+    { name: "Positive", value: Math.round(dist.positive <= 1 ? dist.positive * 100 : dist.positive), color: "hsl(var(--chart-positive))" },
+    { name: "Neutral", value: Math.round(dist.neutral <= 1 ? dist.neutral * 100 : dist.neutral), color: "hsl(var(--chart-neutral))" },
+    { name: "Negative", value: Math.round(dist.negative <= 1 ? dist.negative * 100 : dist.negative), color: "hsl(var(--chart-negative))" },
   ];
 
   const sourceDisplayNames: Record<string, string> = {
@@ -472,9 +472,9 @@ function ComparisonView({ analysis, entityA, entityB, themes, quotes, sourceBrea
 
   const EntityCard = ({ entity, label }: { entity: ComparisonEntity; label: string }) => {
     const entityPieData = [
-      { name: "Positive", value: entity.distribution.positive, color: "hsl(var(--chart-positive))" },
-      { name: "Neutral", value: entity.distribution.neutral, color: "hsl(var(--chart-neutral))" },
-      { name: "Negative", value: entity.distribution.negative, color: "hsl(var(--chart-negative))" },
+      { name: "Positive", value: Math.round(entity.distribution.positive <= 1 ? entity.distribution.positive * 100 : entity.distribution.positive), color: "hsl(var(--chart-positive))" },
+      { name: "Neutral", value: Math.round(entity.distribution.neutral <= 1 ? entity.distribution.neutral * 100 : entity.distribution.neutral), color: "hsl(var(--chart-neutral))" },
+      { name: "Negative", value: Math.round(entity.distribution.negative <= 1 ? entity.distribution.negative * 100 : entity.distribution.negative), color: "hsl(var(--chart-negative))" },
     ];
 
     return (
