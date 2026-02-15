@@ -217,11 +217,11 @@ serve(async (req) => {
             body: JSON.stringify({
               mode: "search",
               searchQuery: query,
-              sortBy: "relevance",
-              maxResults: 100,
+              sortBy: "activity",
+              maxResults: 200,
             }),
           },
-          35000
+          45000
         );
         if (!res.ok) {
           console.error(`StackOverflow Apify failed for "${query}":`, res.status, await res.text());
@@ -231,11 +231,7 @@ serve(async (req) => {
         console.log(`StackOverflow Apify results for "${query}": ${(items || []).length}`);
         if ((items || []).length > 0) {
           console.log(`StackOverflow sample item keys:`, JSON.stringify(Object.keys(items[0])));
-          console.log(`StackOverflow sample date fields:`, JSON.stringify({
-            creation_date: items[0].creation_date, createdAt: items[0].createdAt,
-            date: items[0].date, last_activity_date: items[0].last_activity_date,
-            created: items[0].created, timestamp: items[0].timestamp,
-          }));
+          console.log(`StackOverflow sample lastActivityAt: ${items[0].lastActivityAt}, createdAt: ${items[0].createdAt}`);
         }
         const docs: any[] = [];
         for (const item of items || []) {
@@ -281,9 +277,9 @@ serve(async (req) => {
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ keywords: [query], maxItems: 50 }),
+            body: JSON.stringify({ keywords: [query], maxItems: 30 }),
           },
-          55000
+          58000
         );
         if (!res.ok) {
           console.error(`Substack easyapi failed for "${query}":`, res.status, await res.text());
