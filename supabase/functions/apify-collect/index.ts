@@ -201,32 +201,43 @@ serve(async (req) => {
       } catch (e) { console.error(`X/Twitter error for "${query}":`, e); }
     };
 
-    // ── Stack Overflow via Stack Exchange API ──
+    // ── Stack Overflow via Apify (muscular_quadruplet/stackoverflow-scraper) ──
     const fetchStackOverflow = async (query: string) => {
       try {
-        console.log(`StackOverflow API searching: ${query}`);
-        const soRes = await fetch(
-          `https://api.stackexchange.com/2.3/search/advanced?order=desc&sort=relevance&q=${encodeURIComponent(query)}&site=stackoverflow&pagesize=100&filter=withbody&fromdate=${cutoffTimestamp}`
+        console.log(`StackOverflow (Apify): searching "${query}"`);
+        const res = await fetchWithTimeout(
+          "https://api.apify.com/v2/acts/muscular_quadruplet~stackoverflow-scraper/run-sync-get-dataset-items?token=" + APIFY_API_KEY,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              mode: "search",
+              searchQuery: query,
+              sortBy: "relevance",
+              maxResults: 100,
+            }),
+          },
+          35000
         );
-        if (!soRes.ok) {
-          console.error("StackOverflow API failed:", soRes.status);
+        if (!res.ok) {
+          console.error(`StackOverflow Apify failed for "${query}":`, res.status, await res.text());
           return;
         }
-        const data = await soRes.json();
-        const items = data.items || [];
-        console.log(`StackOverflow results: ${items.length}`);
+        const items = await res.json();
+        console.log(`StackOverflow Apify results for "${query}": ${(items || []).length}`);
         const docs: any[] = [];
-        for (const item of items) {
-          const body = (item.body || "").replace(/<[^>]+>/g, "");
-          const text = `${item.title}\n${body}`;
+        for (const item of items || []) {
+          const body = (item.body || item.content || "").replace(/<[^>]+>/g, "");
+          const title = item.title || "";
+          const text = title + (body ? "\n" + body : "");
           if (text.trim().length > 0) {
             docs.push({
               question_id: questionId, source: "stackoverflow",
-              url: item.link || null,
-              author: item.owner?.display_name || null,
+              url: item.link || item.url || null,
+              author: item.owner?.display_name || item.author || null,
               text: text.slice(0, 2000),
-              date: item.creation_date ? new Date(item.creation_date * 1000).toISOString() : null,
-              engagement_metrics: { score: item.score, answers: item.answer_count, views: item.view_count },
+              date: item.creation_date ? new Date(item.creation_date * 1000).toISOString() : item.createdAt || item.date || null,
+              engagement_metrics: { score: item.score || 0, answers: item.answer_count || 0, views: item.view_count || 0 },
             });
           }
         }
@@ -237,46 +248,59 @@ serve(async (req) => {
       } catch (e) { console.error("StackOverflow error:", e); }
     };
 
-    // ── Substack via Firecrawl — run both searches in PARALLEL ──
+    // ── Substack via Apify (google-search to find substack content) ──
     const fetchSubstack = async (query: string) => {
       try {
-        const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY");
-        if (!FIRECRAWL_API_KEY) { console.error("FIRECRAWL_API_KEY not configured"); return; }
-
-        const tbs = timeRangeDays <= 7 ? "qdr:w" : timeRangeDays <= 30 ? "qdr:m" : "qdr:y";
-        const searches = [`site:substack.com ${query}`, `${query} substack`];
+        // Use Apify's Google Search Results scraper to find Substack posts
+        const searches = [`site:substack.com ${query}`, `"${query}" substack newsletter`];
         const seenUrls = new Set<string>();
         const docs: any[] = [];
 
-        // Run both searches in parallel instead of sequentially
         const results = await Promise.allSettled(
           searches.map(async (searchQuery) => {
-            console.log(`Substack (Firecrawl) searching: ${searchQuery}`);
-            const res = await fetchWithTimeout("https://api.firecrawl.dev/v1/search", {
-              method: "POST",
-              headers: { "Authorization": `Bearer ${FIRECRAWL_API_KEY}`, "Content-Type": "application/json" },
-              body: JSON.stringify({ query: searchQuery, limit: 25, tbs, scrapeOptions: { formats: ["markdown"] } }),
-            }, 20000);
-            if (!res.ok) { console.error(`Substack Firecrawl failed:`, res.status); return []; }
+            console.log(`Substack (Apify Google Search): searching "${searchQuery}"`);
+            const res = await fetchWithTimeout(
+              "https://api.apify.com/v2/acts/apify~google-search-scraper/run-sync-get-dataset-items?token=" + APIFY_API_KEY,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  queries: searchQuery,
+                  maxPagesPerQuery: 3,
+                  resultsPerPage: 25,
+                  languageCode: "en",
+                }),
+              },
+              35000
+            );
+            if (!res.ok) {
+              console.error(`Substack Apify Google Search failed:`, res.status, await res.text());
+              return [];
+            }
             const data = await res.json();
-            return data?.data || [];
+            // Google search scraper returns organic results nested
+            const allResults: any[] = [];
+            for (const page of data || []) {
+              if (page.organicResults) allResults.push(...page.organicResults);
+            }
+            return allResults;
           })
         );
 
         for (const r of results) {
           if (r.status !== "fulfilled") continue;
           for (const item of r.value) {
-            const url = item.url || "";
+            const url = item.url || item.link || "";
             if (seenUrls.has(url)) continue;
             seenUrls.add(url);
-            const text = item.markdown || item.description || "";
+            const text = (item.title || "") + (item.description || item.snippet ? "\n" + (item.description || item.snippet) : "");
             if (text.trim().length > 0) {
               docs.push({
                 question_id: questionId, source: "substack",
                 url: url || null,
-                author: item.metadata?.author || item.metadata?.ogSiteName || null,
+                author: item.displayedUrl || null,
                 text: text.slice(0, 2000),
-                date: item.metadata?.publishedTime || null,
+                date: item.date || null,
                 engagement_metrics: {},
               });
             }
