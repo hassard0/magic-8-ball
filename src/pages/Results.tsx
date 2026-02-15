@@ -414,8 +414,11 @@ function StandardView({ analysis, dist, themes, quotes, sourceBreakdown, documen
           <CardContent>
             <div className="h-48">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={barData}>
-                  <XAxis dataKey="name" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
+                <BarChart data={barData} margin={{ bottom: 50 }}>
+                  <XAxis dataKey="name" interval={0} tick={(props: any) => {
+                    const { x, y, payload } = props;
+                    return (<g transform={`translate(${x},${y})`}><text x={0} y={0} dy={10} textAnchor="end" fill="hsl(var(--muted-foreground))" fontSize={10} transform="rotate(-35)">{payload.value}</text></g>);
+                  }} />
                   <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
                   <Tooltip />
                   <Bar dataKey="count" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
@@ -563,8 +566,11 @@ function ComparisonView({ analysis, entityA, entityB, themes, quotes, sourceBrea
         <CardContent>
           <div className="h-48">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={barData}>
-                <XAxis dataKey="name" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
+              <BarChart data={barData} margin={{ bottom: 50 }}>
+                <XAxis dataKey="name" interval={0} tick={(props: any) => {
+                  const { x, y, payload } = props;
+                  return (<g transform={`translate(${x},${y})`}><text x={0} y={0} dy={10} textAnchor="end" fill="hsl(var(--muted-foreground))" fontSize={10} transform="rotate(-35)">{payload.value}</text></g>);
+                }} />
                 <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
                 <Tooltip />
                 <Bar dataKey="count" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
