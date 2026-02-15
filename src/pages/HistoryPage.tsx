@@ -63,7 +63,7 @@ export default function HistoryPage() {
                   >
                     <div className="min-w-0 flex-1">
                       <p className="text-sm truncate">{q.question_text}</p>
-                      <div className="flex items-center gap-2 mt-1">
+                      <div className="flex flex-wrap items-center gap-2 mt-1">
                         <span className="text-xs text-muted-foreground font-mono">
                           {new Date(q.created_at).toLocaleString()}
                         </span>

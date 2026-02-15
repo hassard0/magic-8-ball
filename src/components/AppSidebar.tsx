@@ -1,7 +1,8 @@
 import { useLocation, useNavigate } from "react-router-dom";
-import { LayoutDashboard, MessageSquarePlus, History, Settings, LogOut } from "lucide-react";
+import { LayoutDashboard, MessageSquarePlus, History, Settings, LogOut, X } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 
 const navItems = [
   { label: "Dashboard", icon: LayoutDashboard, path: "/" },
@@ -13,19 +14,40 @@ const adminItems = [
   { label: "Admin", icon: Settings, path: "/admin" },
 ];
 
-export default function AppSidebar() {
+interface AppSidebarProps {
+  open: boolean;
+  onClose: () => void;
+}
+
+export default function AppSidebar({ open, onClose }: AppSidebarProps) {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const { isAdmin, profile, signOut } = useAuth();
 
   const items = isAdmin ? [...navItems, ...adminItems] : navItems;
 
+  const handleNav = (path: string) => {
+    navigate(path);
+    onClose();
+  };
+
   return (
-    <aside className="fixed left-0 top-0 z-30 flex h-screen w-56 flex-col border-r border-sidebar-border bg-sidebar">
+    <aside
+      className={cn(
+        "fixed left-0 top-0 z-50 flex h-screen w-56 flex-col border-r border-sidebar-border bg-sidebar transition-transform duration-200",
+        "lg:translate-x-0",
+        open ? "translate-x-0" : "-translate-x-full"
+      )}
+    >
       {/* Logo */}
-      <div className="flex items-center gap-2.5 px-5 py-5 border-b border-sidebar-border">
-        <span className="text-2xl">🎱</span>
-        <span className="font-semibold text-sm text-sidebar-foreground tracking-tight">Magic 8-Ball</span>
+      <div className="flex items-center justify-between px-5 py-5 border-b border-sidebar-border">
+        <div className="flex items-center gap-2.5">
+          <span className="text-2xl">🎱</span>
+          <span className="font-semibold text-sm text-sidebar-foreground tracking-tight">Magic 8-Ball</span>
+        </div>
+        <Button variant="ghost" size="icon" onClick={onClose} className="lg:hidden h-7 w-7">
+          <X className="h-4 w-4" />
+        </Button>
       </div>
 
       {/* Nav */}
@@ -35,7 +57,7 @@ export default function AppSidebar() {
           return (
             <button
               key={item.path}
-              onClick={() => navigate(item.path)}
+              onClick={() => handleNav(item.path)}
               className={cn(
                 "flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors",
                 active

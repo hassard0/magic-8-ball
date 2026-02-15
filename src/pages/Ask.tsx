@@ -113,7 +113,7 @@ export default function Ask() {
                 <Label className="text-xs text-muted-foreground uppercase tracking-wider">
                   Time Range
                 </Label>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   {TIME_RANGES.map((tr) => (
                     <Button
                       key={tr.value}
@@ -133,7 +133,7 @@ export default function Ask() {
                 <Label className="text-xs text-muted-foreground uppercase tracking-wider">
                   Sources
                 </Label>
-                <div className="flex gap-4">
+                <div className="flex flex-wrap gap-4">
                   {SOURCES.map((s) => (
                     <label key={s.value} className="flex items-center gap-2 cursor-pointer">
                       <Checkbox
