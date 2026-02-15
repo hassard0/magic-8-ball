@@ -64,7 +64,7 @@ serve(async (req) => {
 
       const acceptUrl = `${req.headers.get("origin") || supabaseUrl}/auth?invite=${invite.token}`;
 
-      await fetch("https://api.resend.com/emails", {
+      const emailRes = await fetch("https://api.resend.com/emails", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${RESEND_API_KEY}`,
@@ -82,6 +82,13 @@ serve(async (req) => {
           `,
         }),
       });
+      const emailBody = await emailRes.text();
+      console.log("Resend response:", emailRes.status, emailBody);
+      if (!emailRes.ok) {
+        console.error("Resend email failed:", emailRes.status, emailBody);
+      }
+    } else {
+      console.warn("RESEND_API_KEY not set, skipping email");
     }
 
     return new Response(JSON.stringify({ success: true }), {
