@@ -18,16 +18,15 @@ serve(async (req) => {
     const systemPrompt = `You are a question classifier and search keyword extractor for a community sentiment analysis tool.
 
 Given a user's question, first CLASSIFY it into one of these types:
-1. "standard" — Asks about sentiment/opinions on a specific company, product, or technology topic. Example: "How do people feel about Auth0 pricing?"
+1. "standard" — Asks about sentiment/opinions on a specific topic, company, product, hobby, or anything people discuss online. Example: "How do people feel about Auth0 pricing?" or "Should I buy more pokemon cards?"
 2. "comparative" — Compares two specific entities. Example: "Is WorkOS better than Auth0?" or "Stripe vs Square"
-3. "abstract" — A broad or metaphorical question that CAN be reframed into a searchable topic about technology/community sentiment. Example: "Is software dead?" → can be reframed to search for "software engineering future AI"
-4. "unanswerable" — Completely off-topic, personal, or nonsensical for community sentiment analysis. Example: "There is a meaning in life?", "Did I just overwhelm this cluster?", "What's 2+2?"
+3. "abstract" — A broad or metaphorical question that CAN be reframed into searchable terms. Example: "Is software dead?" → search for "software engineering future AI"
 
 RULES:
+- NEVER classify a question as unanswerable. Every question can be searched for community opinions.
 - For "standard": Extract 1-3 core search keywords (entity name + narrowing terms)
 - For "comparative": Extract the two entities being compared, plus 1-2 keywords per entity
 - For "abstract": Reframe into 1-3 searchable keyword phrases that would find relevant community discussions
-- For "unanswerable": No keywords needed
 - Keep each keyword/phrase to 1-3 words maximum
 - DO NOT add generic terms like "review", "opinion", "alternative"`;
 
@@ -54,7 +53,7 @@ RULES:
                 properties: {
                   type: {
                     type: "string",
-                    enum: ["standard", "comparative", "abstract", "unanswerable"],
+                    enum: ["standard", "comparative", "abstract"],
                     description: "The classification type of the question",
                   },
                   keywords: {
@@ -79,10 +78,6 @@ RULES:
                     type: "array",
                     items: { type: "string" },
                     description: "1-2 search keywords for entity B in comparative questions",
-                  },
-                  rejection_reason: {
-                    type: "string",
-                    description: "Brief friendly reason why the question can't be answered (for unanswerable type)",
                   },
                 },
                 required: ["type"],
@@ -121,13 +116,15 @@ RULES:
     console.log("Classification result:", JSON.stringify(result));
 
     if (result.type === "unanswerable") {
-      return new Response(JSON.stringify({
-        type: "unanswerable",
-        rejection_reason: result.rejection_reason || "This question isn't suited for community sentiment analysis. Try asking about a specific company, product, or technology topic.",
-      }), {
+      // Treat as abstract — reframe and search anyway
+      const keywords = result.keywords?.length > 0 ? result.keywords : [questionText];
+      const queries: Record<string, string[]> = {};
+      for (const s of sources) queries[s] = keywords;
+      return new Response(JSON.stringify({ type: "abstract", queries }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
 
     if (result.type === "comparative") {
       // Build separate query sets for each entity
