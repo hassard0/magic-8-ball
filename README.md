@@ -20,18 +20,18 @@ Magic 8-Ball answers your questions about community sentiment by scraping Reddit
 ## Tech Stack
 
 - **Frontend** — React, TypeScript, Vite, Tailwind CSS, shadcn/ui, Recharts, Framer Motion
-- **Backend** — Lovable Cloud (Supabase) — Postgres database, Edge Functions, Auth, RLS
-- **AI** — Google Gemini via Lovable AI gateway (no API key needed)
+- **Backend** — Supabase (Postgres, Edge Functions, Auth, RLS)
+- **AI** — Google Gemini
 - **Scraping** — Apify (Reddit & Hacker News actors), Firecrawl (Substack)
 
 ## Integration Requirements
 
 | Service | Purpose | Setup |
 |---------|---------|-------|
+| **Gemini** | Question classification & sentiment analysis | Add `LOVABLE_API_KEY` or configure Gemini API access |
 | **Apify** | Scrapes Reddit and Hacker News | Add `APIFY_API_KEY` as a backend secret |
 | **Firecrawl** | Searches Substack articles | Add `FIRECRAWL_API_KEY` as a backend secret |
 | **Resend** | Sends team invite emails | Add `RESEND_API_KEY` as a backend secret |
-| **Lovable AI** | Question classification & sentiment analysis | Pre-configured — no setup needed |
 
 ## Features
 
@@ -52,4 +52,4 @@ npm run dev
 
 ## Deployment
 
-Open [Lovable](https://lovable.dev) and click **Share → Publish**.
+Deploy via your preferred static hosting (Vercel, Netlify, etc.) or any platform that supports Vite-based React apps.
