@@ -52,4 +52,4 @@ npm run dev
 
 ## Deployment
 
-Open [Lovable](https://lovable.dev) and click **Share → Publish**.
+Deploy via your preferred static hosting (Vercel, Netlify, etc.) or any platform that supports Vite-based React apps.
