@@ -20,8 +20,8 @@ Magic 8-Ball answers your questions about community sentiment by scraping Reddit
 ## Tech Stack
 
 - **Frontend** — React, TypeScript, Vite, Tailwind CSS, shadcn/ui, Recharts, Framer Motion
-- **Backend** — Lovable Cloud (Supabase) — Postgres database, Edge Functions, Auth, RLS
-- **AI** — Google Gemini via Lovable AI gateway (no API key needed)
+- **Backend** — Supabase (Postgres, Edge Functions, Auth, RLS)
+- **AI** — Google Gemini
 - **Scraping** — Apify (Reddit & Hacker News actors), Firecrawl (Substack)
 
 ## Integration Requirements
