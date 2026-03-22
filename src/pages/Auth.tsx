@@ -214,6 +214,18 @@ export default function Auth() {
             </div>
           </CardContent>
         </Card>
+
+        <footer className="text-center text-xs text-muted-foreground">
+          Made with ❤️ by{" "}
+          <a
+            href="https://github.com/hassard0"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline hover:text-foreground transition-colors"
+          >
+            hassard0
+          </a>
+        </footer>
       </div>
     </div>
   );
