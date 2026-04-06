@@ -261,7 +261,7 @@ export default function Results() {
           <div className="flex items-center gap-2 shrink-0">
             {(question.status === "complete" || question.status === "failed") && (
               <>
-                <Button variant="outline" size="sm" onClick={handleReanalyze} disabled={reanalyzing || documents.length === 0} title="Re-run sentiment analysis on existing data">
+                <Button variant="secondary" size="sm" onClick={handleReanalyze} disabled={reanalyzing || documents.length === 0} title="Re-run sentiment analysis on existing data">
                   <RefreshCw className={`h-4 w-4 mr-1.5 ${reanalyzing ? "animate-spin" : ""}`} />
                   {reanalyzing ? "Analyzing…" : "Re-analyze"}
                 </Button>
