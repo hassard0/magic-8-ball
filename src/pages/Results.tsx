@@ -309,30 +309,43 @@ export default function Results() {
                   <p className="text-sm text-muted-foreground">
                     {(question as any).progress_step || (question.status === "queued" ? "Your question is queued..." : "Processing...")}
                   </p>
-                  <div className="max-w-xs mx-auto space-y-3">
-                    {[
-                      { icon: Search, label: "Classify & extract keywords", step: "Classifying,Extracting" },
-                      { icon: BarChart3, label: "Collect data", step: "Collecting" },
-                      { icon: Filter, label: "Filter relevance", step: "Filtering" },
-                      { icon: Brain, label: "Analyze sentiment", step: "Analyzing" },
-                    ].map(({ icon: Icon, label, step }, i) => {
-                      const progressStep = (question as any).progress_step || "";
-                      const stepKeywords = step.split(",");
-                      const isActive = stepKeywords.some(s => progressStep.toLowerCase().includes(s.toLowerCase()));
-                      const stepOrder = ["Classifying", "Collecting", "Filtering", "Analyzing"];
-                      const currentIdx = stepOrder.findIndex(s => progressStep.toLowerCase().includes(s.toLowerCase()));
-                      const isDone = currentIdx > i;
-                      return (
-                        <div key={i} className={`flex items-center gap-3 text-sm transition-all ${isActive ? "text-primary font-medium" : isDone ? "text-muted-foreground" : "text-muted-foreground/40"}`}>
-                          <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${isActive ? "bg-primary/15 animate-pulse" : isDone ? "bg-primary/10" : "bg-muted"}`}>
-                            <Icon className="h-3 w-3" />
-                          </div>
-                          <span>{label}</span>
-                          {isDone && <span className="ml-auto text-xs text-chart-positive">✓</span>}
-                          {isActive && <span className="ml-auto text-xs text-primary animate-pulse">●</span>}
+                  {((question as any).progress_step || "").toLowerCase().includes("re-analyzing") ? (
+                    <div className="max-w-xs mx-auto space-y-3">
+                      <div className="flex items-center gap-3 text-sm text-primary font-medium">
+                        <div className="w-6 h-6 rounded-full flex items-center justify-center shrink-0 bg-primary/15 animate-pulse">
+                          <Brain className="h-3 w-3" />
                         </div>
-                      );
-                    })}
+                        <span>Re-analyzing sentiment with stricter filtering</span>
+                        <span className="ml-auto text-xs text-primary animate-pulse">●</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="max-w-xs mx-auto space-y-3">
+                      {[
+                        { icon: Search, label: "Classify & extract keywords", step: "Classifying,Extracting" },
+                        { icon: BarChart3, label: "Collect data", step: "Collecting" },
+                        { icon: Filter, label: "Filter relevance", step: "Filtering" },
+                        { icon: Brain, label: "Analyze sentiment", step: "Analyzing,Re-analyzing" },
+                      ].map(({ icon: Icon, label, step }, i) => {
+                        const progressStep = (question as any).progress_step || "";
+                        const stepKeywords = step.split(",");
+                        const isActive = stepKeywords.some(s => progressStep.toLowerCase().includes(s.toLowerCase()));
+                        const stepOrder = ["Classifying", "Collecting", "Filtering", "Analyzing"];
+                        const currentIdx = stepOrder.findIndex(s => progressStep.toLowerCase().includes(s.toLowerCase()));
+                        const isDone = currentIdx > i;
+                        return (
+                          <div key={i} className={`flex items-center gap-3 text-sm transition-all ${isActive ? "text-primary font-medium" : isDone ? "text-muted-foreground" : "text-muted-foreground/40"}`}>
+                            <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${isActive ? "bg-primary/15 animate-pulse" : isDone ? "bg-primary/10" : "bg-muted"}`}>
+                              <Icon className="h-3 w-3" />
+                            </div>
+                            <span>{label}</span>
+                            {isDone && <span className="ml-auto text-xs text-chart-positive">✓</span>}
+                            {isActive && <span className="ml-auto text-xs text-primary animate-pulse">●</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                   </div>
                 </>
               )}
