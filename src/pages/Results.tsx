@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ArrowLeft, ExternalLink, TrendingUp, TrendingDown, Minus, Shield, MessageSquare, Hash, RotateCcw, Trash2, Search, Filter, BarChart3, Brain, ThumbsUp, ThumbsDown } from "lucide-react";
+import { ArrowLeft, ExternalLink, TrendingUp, TrendingDown, Minus, Shield, MessageSquare, Hash, RotateCcw, Trash2, Search, Filter, BarChart3, Brain, ThumbsUp, ThumbsDown, RefreshCw, Info } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
   AlertDialog,
@@ -55,6 +55,7 @@ export default function Results() {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
   const [rerunning, setRerunning] = useState(false);
+  const [reanalyzing, setReanalyzing] = useState(false);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -120,6 +121,25 @@ export default function Results() {
       toast({ title: "Error", description: "Failed to re-run. Please try again.", variant: "destructive" });
     } finally {
       setRerunning(false);
+    }
+  };
+
+  const handleReanalyze = async () => {
+    if (!id) return;
+    setReanalyzing(true);
+    try {
+      // Delete existing analysis but keep documents
+      await supabase.from("analysis_results").delete().eq("question_id", id);
+      setAnalysis(null);
+      await supabase.from("questions").update({ status: "running", progress_step: "Analyzing sentiment..." }).eq("id", id);
+      setQuestion((prev) => prev ? { ...prev, status: "running" as const } : prev);
+      supabase.functions.invoke("analyze-sentiment", { body: { questionId: id } });
+      toast({ title: "Re-analyzing", description: "Re-processing sentiment with existing data..." });
+    } catch (err) {
+      console.error("Re-analyze error:", err);
+      toast({ title: "Error", description: "Failed to re-analyze.", variant: "destructive" });
+    } finally {
+      setReanalyzing(false);
     }
   };
 
@@ -227,10 +247,16 @@ export default function Results() {
           </div>
           <div className="flex items-center gap-2 shrink-0">
             {(question.status === "complete" || question.status === "failed") && (
-              <Button variant="secondary" size="sm" onClick={handleRerun} disabled={rerunning}>
-                <RotateCcw className={`h-4 w-4 mr-1.5 ${rerunning ? "animate-spin" : ""}`} />
-                {rerunning ? "Re-running…" : "Re-run"}
-              </Button>
+              <>
+                <Button variant="outline" size="sm" onClick={handleReanalyze} disabled={reanalyzing || documents.length === 0} title="Re-run sentiment analysis on existing data">
+                  <RefreshCw className={`h-4 w-4 mr-1.5 ${reanalyzing ? "animate-spin" : ""}`} />
+                  {reanalyzing ? "Analyzing…" : "Re-analyze"}
+                </Button>
+                <Button variant="secondary" size="sm" onClick={handleRerun} disabled={rerunning}>
+                  <RotateCcw className={`h-4 w-4 mr-1.5 ${rerunning ? "animate-spin" : ""}`} />
+                  {rerunning ? "Re-running…" : "Re-run"}
+                </Button>
+              </>
             )}
             <AlertDialog>
               <AlertDialogTrigger asChild>
@@ -301,6 +327,11 @@ export default function Results() {
           </Card>
         ) : analysis ? (
           <>
+            {/* Late-data hint */}
+            <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/50 px-4 py-2.5 text-xs text-muted-foreground">
+              <Info className="h-3.5 w-3.5 shrink-0" />
+              <span>Some sources may return data after analysis completes. Click <strong>Re-analyze</strong> to reprocess with any new data.</span>
+            </div>
             {comparisonMode ? (
               <ComparisonView
                 analysis={analysis}
