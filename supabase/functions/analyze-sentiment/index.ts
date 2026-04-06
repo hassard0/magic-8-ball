@@ -86,11 +86,21 @@ serve(async (req) => {
   }
 });
 
-async function runStandardAnalysis(supabase: any, questionId: string, question: any, documents: any[], docSummaries: string, LOVABLE_API_KEY: string) {
+async function runStandardAnalysis(supabase: any, questionId: string, question: any, documents: any[], docSummaries: string, LOVABLE_API_KEY: string, reanalyze = false) {
+  const reanalyzeInstructions = reanalyze ? `
+
+RE-ANALYSIS MODE — STRICTER RELEVANCE:
+This is a RE-ANALYSIS pass. Apply MAXIMUM scrutiny to determine if each document is actually relevant to the user's question.
+- FIRST, go through each document and determine if it genuinely discusses the topic in the question. Many documents may have been collected by keyword matching but are actually about completely different subjects.
+- DISCARD any document that is not specifically about the topic the user asked about. Be aggressive — if a post is about sewing, gaming, sports, or any unrelated topic, it is NOT relevant even if it contains a matching keyword.
+- Only include documents that contain genuine opinions, experiences, or discussions about the SPECIFIC topic asked.
+- If after filtering you have very few or zero relevant documents, report that honestly with low confidence rather than analyzing irrelevant content.
+- In source_breakdown, only count documents you actually used in your analysis.` : "";
+
   const systemPrompt = `You are a sentiment analysis expert. Analyze the following community discussions about the question: "${question.question_text}"
 
 USER INTENT: The user wants to understand public sentiment specifically about the topic in their question. When selecting quotes, ONLY include quotes that DIRECTLY discuss the specific company, product, or topic mentioned in the question. Discard any document or quote that merely mentions a keyword tangentially or discusses an unrelated subject.
-
+${reanalyzeInstructions}
 CRITICAL RULES FOR QUOTES:
 - EVERY quote MUST be directly relevant to the user's question — it should express an opinion, experience, or fact about the specific topic asked about.
 - Do NOT include quotes about unrelated products, companies, or topics even if they appear in the collected data.
