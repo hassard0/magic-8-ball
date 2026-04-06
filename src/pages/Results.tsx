@@ -327,6 +327,11 @@ export default function Results() {
           </Card>
         ) : analysis ? (
           <>
+            {/* Late-data hint */}
+            <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/50 px-4 py-2.5 text-xs text-muted-foreground">
+              <Info className="h-3.5 w-3.5 shrink-0" />
+              <span>Some sources may return data after analysis completes. Click <strong>Re-analyze</strong> to reprocess with any new data.</span>
+            </div>
             {comparisonMode ? (
               <ComparisonView
                 analysis={analysis}
