@@ -55,6 +55,7 @@ export default function Results() {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
   const [rerunning, setRerunning] = useState(false);
+  const [reanalyzing, setReanalyzing] = useState(false);
   const { toast } = useToast();
 
   useEffect(() => {
