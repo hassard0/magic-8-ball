@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ArrowLeft, ExternalLink, TrendingUp, TrendingDown, Minus, Shield, MessageSquare, Hash, RotateCcw, Trash2, Search, Filter, BarChart3, Brain, ThumbsUp, ThumbsDown } from "lucide-react";
+import { ArrowLeft, ExternalLink, TrendingUp, TrendingDown, Minus, Shield, MessageSquare, Hash, RotateCcw, Trash2, Search, Filter, BarChart3, Brain, ThumbsUp, ThumbsDown, RefreshCw, Info } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
   AlertDialog,
