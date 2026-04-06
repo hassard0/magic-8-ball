@@ -128,24 +128,18 @@ export default function Results() {
     if (!id) return;
     setReanalyzing(true);
     try {
-      // Delete existing analysis but keep documents
       await supabase.from("analysis_results").delete().eq("question_id", id);
       setAnalysis(null);
-      await supabase.from("questions").update({ status: "running", progress_step: "Re-analyzing with stricter relevance..." }).eq("id", id);
-      setQuestion((prev) => prev ? { ...prev, status: "running" as const } : prev);
+      await supabase
+        .from("questions")
+        .update({ status: "running", progress_step: "Re-analyzing with stricter relevance..." })
+        .eq("id", id);
+      setQuestion((prev) => prev ? { ...prev, status: "running" as const, progress_step: "Re-analyzing with stricter relevance..." } : prev);
 
-      // Use fetch directly to ensure the request reaches the edge function
-      const { data: { session } } = await supabase.auth.getSession();
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-      fetch(`${supabaseUrl}/functions/v1/analyze-sentiment`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session?.access_token}`,
-          apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
-        },
-        body: JSON.stringify({ questionId: id, reanalyze: true }),
-      }).catch((err) => console.error("Re-analyze fetch error:", err));
+      const { error } = await supabase.functions.invoke("run-question", {
+        body: { questionId: id, reanalyze: true },
+      });
+      if (error) throw error;
 
       toast({ title: "Re-analyzing", description: "Re-processing with stricter relevance filtering..." });
     } catch (err) {
