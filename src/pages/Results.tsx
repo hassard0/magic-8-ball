@@ -124,6 +124,25 @@ export default function Results() {
     }
   };
 
+  const handleReanalyze = async () => {
+    if (!id) return;
+    setReanalyzing(true);
+    try {
+      // Delete existing analysis but keep documents
+      await supabase.from("analysis_results").delete().eq("question_id", id);
+      setAnalysis(null);
+      await supabase.from("questions").update({ status: "running", progress_step: "Analyzing sentiment..." }).eq("id", id);
+      setQuestion((prev) => prev ? { ...prev, status: "running" as const } : prev);
+      supabase.functions.invoke("analyze-sentiment", { body: { questionId: id } });
+      toast({ title: "Re-analyzing", description: "Re-processing sentiment with existing data..." });
+    } catch (err) {
+      console.error("Re-analyze error:", err);
+      toast({ title: "Error", description: "Failed to re-analyze.", variant: "destructive" });
+    } finally {
+      setReanalyzing(false);
+    }
+  };
+
   const handleDelete = async () => {
     if (!id) return;
     try {
