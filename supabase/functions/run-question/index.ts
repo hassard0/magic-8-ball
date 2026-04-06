@@ -46,10 +46,7 @@ serve(async (req) => {
       Authorization: `Bearer ${serviceKey}`,
     };
 
-    // Mark as running
-    await supabase.from("questions").update({ status: "running", progress_step: "Classifying question..." }).eq("id", questionId);
-
-    // Get question details
+    // Get question details first so re-analysis can bypass collection entirely
     const { data: question, error: qErr } = await supabase
       .from("questions")
       .select("*")
@@ -57,6 +54,32 @@ serve(async (req) => {
       .single();
 
     if (qErr || !question) throw new Error("Question not found");
+
+    const isReanalyze =
+      body.reanalyze === true ||
+      (question.progress_step ?? "").toLowerCase().includes("re-analyzing");
+
+    if (isReanalyze) {
+      await supabase
+        .from("questions")
+        .update({ status: "running", progress_step: "Re-analyzing with stricter relevance..." })
+        .eq("id", questionId);
+
+      fetchWithTimeout(`${supabaseUrl}/functions/v1/analyze-sentiment`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ questionId, reanalyze: true }),
+      }, 55000).catch((err) => {
+        console.error("Analyze sentiment re-analyze handoff error:", err);
+      });
+
+      return new Response(JSON.stringify({ success: true, message: "Re-analysis handed off", reanalyze: true }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Mark as running
+    await supabase.from("questions").update({ status: "running", progress_step: "Classifying question..." }).eq("id", questionId);
 
     // Step 0: Classify and optimize search queries via Gemini
     let classification: any = { type: "standard" };
