@@ -14,8 +14,11 @@ serve(async (req) => {
     const body = await req.json();
     questionId = body.questionId;
     const comparison = body.comparison;
+    const reanalyze = body.reanalyze === true;
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
+
+    console.log(`analyze-sentiment called: questionId=${questionId}, reanalyze=${reanalyze}`);
 
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
@@ -32,6 +35,8 @@ serve(async (req) => {
       .from("documents")
       .select("*")
       .eq("question_id", questionId);
+
+    console.log(`Found ${documents?.length || 0} documents for question`);
 
     if (!question || !documents || documents.length === 0) {
       await supabase.from("analysis_results").upsert({
@@ -61,7 +66,7 @@ serve(async (req) => {
       await supabase.from("questions").update({ status: "complete", progress_step: null }).eq("id", questionId);
       return result;
     } else {
-      const result = await runStandardAnalysis(supabase, questionId!, question, documents, docSummaries, LOVABLE_API_KEY);
+      const result = await runStandardAnalysis(supabase, questionId!, question, documents, docSummaries, LOVABLE_API_KEY, reanalyze);
       await supabase.from("questions").update({ status: "complete", progress_step: null }).eq("id", questionId);
       return result;
     }
