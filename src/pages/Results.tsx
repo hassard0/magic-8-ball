@@ -346,7 +346,6 @@ export default function Results() {
                       })}
                     </div>
                   )}
-                  </div>
                 </>
               )}
             </CardContent>
